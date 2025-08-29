@@ -1,0 +1,82 @@
+name: spring-cicd
+on:
+  push: { branches: [ main ] }
+  workflow_dispatch:
+
+permissions: { id-token: write, contents: read }
+
+env:
+  AWS_REGION: ap-northeast-2
+  ACCOUNT_ID: "471583395947"
+  ECR_REPO: tuddy-api
+  EC2_INSTANCE_ID: i-0f519ff0d4ecb5ad9
+  ECR_REGISTRY: 471583395947.dkr.ecr.ap-northeast-2.amazonaws.com
+
+concurrency:
+  group: spring-prod
+  cancel-in-progress: true
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::471583395947:role/ECRPushRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:sha-${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:prod
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::471583395947:role/EC2DeployRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: SSM deploy spring
+        id: ssm
+        run: |
+          CID=$(aws ssm send-command \
+            --region "${{ env.AWS_REGION }}" \
+            --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --query 'Command.CommandId' --output text \
+            --parameters '{"commands":["sudo /opt/tuddy/deploy_tuddy.sh spring"]}')
+          echo "cid=$CID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait SSM completion
+        run: |
+          for i in {1..60}; do
+            S=$(aws ssm get-command-invocation \
+                  --region "${{ env.AWS_REGION }}" \
+                  --command-id "${{ steps.ssm.outputs.cid }}" \
+                  --instance-id "${{ env.EC2_INSTANCE_ID }}" \
+                  --query Status --output text || true)
+            echo "status=$S"
+            if [ "$S" = "Success" ]; then exit 0; fi
+            if [[ "$S" =~ (Cancelled|Failed|TimedOut) ]]; then exit 1; fi
+            sleep 10
+          done
+          exit 1

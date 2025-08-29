@@ -1,0 +1,13 @@
+.git
+.gitignore
+.gradle
+build/
+out/
+bin/
+*.iml
+.idea/
+*.log
+*.tmp
+*.swp
+.env
+
