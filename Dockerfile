@@ -31,7 +31,7 @@ EXPOSE 8088
 
 # 헬스체크
 HEALTHCHECK --interval=10s --timeout=2s --retries=12 --start-period=60s \
-  CMD curl -fsS http://localhost:${SERVER_PORT}/actuator/health | grep -q '"UP"' || exit 1
+  CMD curl -fsS http://localhost:${SERVER_PORT}/actuator/health/readiness | grep -q '"status":"UP"' || exit 1
 
 ENTRYPOINT ["java","-XX:MaxRAMPercentage=75","-jar","/app/app.jar"]
 

@@ -57,4 +57,29 @@ class ChatProxyControllerWebTest {
                 .content(json))
            .andExpect(status().isBadRequest());
     }
+
+    @Test
+    void normalChat_ok_returns_service_body() throws Exception {
+        given(ragChatService.relayNormal(any())).willReturn("{\"reply\":\"pong\"}");
+        String json = """
+            { "userId":"alice", "query":"ping" }
+            """;
+        mvc.perform(post("/api/normal-chat")
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON)
+                .content(json))
+           .andExpect(status().isOk())
+           .andExpect(content().json("{\"reply\":\"pong\"}"));
+    }
+
+    @Test
+    void normalChat_validation_error_returns_400() throws Exception {
+      String json = "{ \"query\":\"x\" }"; // userId 누락
+      mvc.perform(post("/api/normal-chat")
+          .contentType(MediaType.APPLICATION_JSON)
+          .accept(MediaType.APPLICATION_JSON)
+          .content(json))
+        .andExpect(status().isBadRequest());
+    }
+
 }

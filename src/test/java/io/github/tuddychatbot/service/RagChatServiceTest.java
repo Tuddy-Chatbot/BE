@@ -30,9 +30,10 @@ class RagChatServiceTest {
         server = MockRestServiceServer.bindTo(builder).build();
 
         RestClient client = builder.baseUrl("http://localhost:8089").build();
-        service = new RagChatService(client, "/rag/chat");
+        service = new RagChatService(client, "/rag/chat", "/normal/chat");
     }
 
+    // RAG : API TEST
     @Test
     void relay_success_returns_body_as_is() {
         String expected = "{\"answer\":\"ok\"}";
@@ -48,6 +49,7 @@ class RagChatServiceTest {
         server.verify();
     }
 
+    // RAG : API TEST
     @Test
     void relay_4xx_returns_error_body_as_is() {
         String errorJson = "{\"detail\":\"bad request\"}";
@@ -61,4 +63,31 @@ class RagChatServiceTest {
 
         server.verify();
     }
+
+    // NORMAL : API TEST
+    @Test
+    void relayNormal_success_returns_body_as_is() {
+        server.expect(once(), requestTo("http://localhost:8089/normal/chat"))
+              .andExpect(method(HttpMethod.POST))
+              .andExpect(header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE))
+              .andRespond(withSuccess("{\"ok\":true}", MediaType.APPLICATION_JSON));
+
+        String body = service.relayNormal(new ChatProxyRequest("alice", "hi"));
+        assertEquals("{\"ok\":true}", body);
+        server.verify();
+    }
+
+    // NORMAL : API TEST
+    @Test
+    void relayNormal_4xx_returns_error_body_as_is() {
+        String err = "{\"detail\":\"bad request\"}";
+        server.expect(once(), requestTo("http://localhost:8089/normal/chat"))
+              .andExpect(method(HttpMethod.POST))
+              .andRespond(withBadRequest().contentType(MediaType.APPLICATION_JSON).body(err));
+
+        String body = service.relayNormal(new ChatProxyRequest("alice", "bad"));
+        assertEquals(err, body);
+        server.verify();
+    }
+
 }
