@@ -9,10 +9,11 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Transactional;
 
-import io.github.tuddychatbot.dto.RegisterLocalRequest;
-import io.github.tuddychatbot.entity.user.AuthProvider;
-import io.github.tuddychatbot.entity.user.UserAccount;
-import io.github.tuddychatbot.repository.UserAccountRepository;
+import io.github.tuddy.dto.RegisterLocalRequest;
+import io.github.tuddy.entity.user.AuthProvider;
+import io.github.tuddy.entity.user.UserAccount;
+import io.github.tuddy.repository.UserAccountRepository;
+import io.github.tuddy.service.AuthService;
 
 @SpringBootTest
 @TestPropertySource(properties = {

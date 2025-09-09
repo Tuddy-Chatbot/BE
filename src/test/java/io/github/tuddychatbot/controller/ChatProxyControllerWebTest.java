@@ -23,8 +23,9 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import io.github.tuddychatbot.security.AuthUser;
-import io.github.tuddychatbot.service.RagChatService;
+import io.github.tuddy.controller.ChatProxyController;
+import io.github.tuddy.security.AuthUser;
+import io.github.tuddy.service.RagChatService;
 
 @WebMvcTest(ChatProxyController.class)
 @AutoConfigureMockMvc(addFilters = false)

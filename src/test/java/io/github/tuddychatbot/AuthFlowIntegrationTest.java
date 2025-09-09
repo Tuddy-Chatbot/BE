@@ -16,9 +16,9 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.client.RestClient;
 
-import io.github.tuddychatbot.dto.RegisterLocalRequest;
-import io.github.tuddychatbot.service.AuthService;
-import io.github.tuddychatbot.service.RagChatService;
+import io.github.tuddy.dto.RegisterLocalRequest;
+import io.github.tuddy.service.AuthService;
+import io.github.tuddy.service.RagChatService;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
