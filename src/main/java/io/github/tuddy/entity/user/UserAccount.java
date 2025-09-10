@@ -58,8 +58,13 @@ public class UserAccount {
   @Column(length=20, nullable=false)
   private UserStatus status;
 
+  @Column(name = "last_login_at")
   private LocalDateTime lastLoginAt;
+
+  @Column(name = "created_at")
   private LocalDateTime createdAt;
+
+  @Column(name = "updated_at")
   private LocalDateTime updatedAt;
 
   @PrePersist void prePersist() {

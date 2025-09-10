@@ -55,7 +55,11 @@ public class SecurityConfig {
                                     ObjectProvider<ClientRegistrationRepository> clients) throws Exception {
         http
             // CSRF: 쿠키(XSRF-TOKEN)로 발급 → 프런트가 X-XSRF-TOKEN 헤더로 전송
-            .csrf(csrf -> csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse()))
+            .csrf(csrf -> csrf
+                .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                // 로그인, 회원가입, 로그아웃 경로는 CSRF 보호 예외 처리
+                .ignoringRequestMatchers("/api/auth/register", "/api/auth/login", "/api/auth/logout")
+            )
             .addFilterAfter(new CsrfCookieFilter(), CsrfFilter.class)
             .cors(Customizer.withDefaults())
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
@@ -69,19 +73,18 @@ public class SecurityConfig {
                     "/actuator/health", "/actuator/info",
                     "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html"
                 ).permitAll()
-                // 회원가입/로그인 공개(※ CSRF 헤더는 필요)
+                // 회원가입/로그인 공개
                 .requestMatchers(HttpMethod.POST,
-                		"/api/auth/login", "/api/auth/register",
-                		"/rag/chat", "/normal-chat"
+                		"/api/auth/login", "/api/auth/register"
                 		).permitAll()
-                // FastAPI 프록시 공개로 둘 경우(테스트/퍼블릭용); 보호하려면 이 줄 삭제
-                .requestMatchers("/api/chat/**").permitAll()
+                // /rag/chat, /normal-chat 등은 인증된 사용자만 접근 가능
+                .requestMatchers("/rag/chat", "/normal-chat", "/api/chat/**").authenticated()
                 .anyRequest().authenticated()
             )
             .authenticationProvider(authenticationProvider())
             // 세션 로그아웃
             .logout(l -> l
-                .logoutUrl("/api/auth/logout")
+                .logoutUrl("/api/auth/logout") // Spring Security가 처리할 로그아웃 URL
                 .deleteCookies("JSESSIONID")
                 .logoutSuccessHandler((req, res, auth) -> res.setStatus(HttpServletResponse.SC_OK))
             );
