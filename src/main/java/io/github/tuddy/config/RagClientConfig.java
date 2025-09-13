@@ -1,4 +1,4 @@
-package io.github.tuddychatbot.config;
+package io.github.tuddy.config;
 
 import java.time.Duration;
 

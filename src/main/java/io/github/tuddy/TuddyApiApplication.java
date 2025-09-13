@@ -1,4 +1,4 @@
-package io.github.tuddychatbot;
+package io.github.tuddy;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

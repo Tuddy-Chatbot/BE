@@ -1,4 +1,4 @@
-package io.github.tuddychatbot.health;
+package io.github.tuddy.health;
 
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.actuate.health.Health;
