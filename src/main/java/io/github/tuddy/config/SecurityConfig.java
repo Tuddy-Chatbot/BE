@@ -58,7 +58,7 @@ public class SecurityConfig {
             .csrf(csrf -> csrf
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 // 로그인, 회원가입, 로그아웃 경로는 CSRF 보호 예외 처리
-                .ignoringRequestMatchers("/api/auth/register", "/api/auth/login", "/api/auth/logout")
+                .ignoringRequestMatchers("/api/auth/register", "/api/auth/login")
             )
             .addFilterAfter(new CsrfCookieFilter(), CsrfFilter.class)
             .cors(Customizer.withDefaults())
