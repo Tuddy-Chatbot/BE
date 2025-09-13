@@ -67,7 +67,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET,
                     "/", "/index.html", "/static/**", "/assets/**",
                     "/favicon.ico", "/manifest.json",
-                    "/actuator/health", "/actuator/info",
+                    "/actuator/health/**", "/actuator/info",
                     "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html"
                 ).permitAll()
                 .requestMatchers(HttpMethod.POST, "/auth/login", "/auth/register").permitAll()
