@@ -30,12 +30,12 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
 @RestController
-@RequestMapping("/api/auth")
+@RequestMapping("/auth")
 @RequiredArgsConstructor
 public class AuthController {
   private final AuthService authService;
   private final AuthenticationManager authManager;
-  private final UserAccountRepository users; // DB 조회를 위해 추가
+  private final UserAccountRepository users;
 
   // SecurityContext를 세션에 명시적으로 저장하기 위한 Repository
   private final SecurityContextRepository securityContextRepository = new HttpSessionSecurityContextRepository();

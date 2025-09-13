@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
-import io.github.tuddy.dto.RagChatRequest;
+import io.github.tuddy.dto.FastApiChatRequest;
 
 @Service
 public class RagChatService {
@@ -23,13 +23,12 @@ public class RagChatService {
     this.normalPath = normalPath;
   }
 
-  public String relay(Long userId, String query) {
-    String namespace = String.valueOf(userId);
+  // 메서드 이름을 더 명확하게 변경하고, 새로운 DTO를 받도록 수정
+  public String relayRag(FastApiChatRequest request) {
     try {
       return client.post().uri(chatPath)
         .contentType(MediaType.APPLICATION_JSON)
-        .accept(MediaType.APPLICATION_JSON)
-        .body(new RagChatRequest(namespace, query))
+        .body(request) // 수정된 요청 DTO 사용
         .retrieve()
         .body(String.class);
     } catch (RestClientResponseException e) {
@@ -37,17 +36,16 @@ public class RagChatService {
     }
   }
 
-  public String relayNormal(Long userId, String query) {
-    String namespace = String.valueOf(userId);
-    try {
-      return client.post().uri(normalPath)
-        .contentType(MediaType.APPLICATION_JSON)
-        .accept(MediaType.APPLICATION_JSON)
-        .body(new RagChatRequest(namespace, query))
-        .retrieve()
-        .body(String.class);
-    } catch (RestClientResponseException e) {
-      return e.getResponseBodyAsString();
-    }
-  }
+  public String relayNormal(FastApiChatRequest request) {
+	     try {
+	      return client.post().uri(normalPath)
+	        .contentType(MediaType.APPLICATION_JSON)
+	        .body(request) // 수정된 요청 DTO 사용
+	        .retrieve()
+	        .body(String.class);
+	    } catch (RestClientResponseException e) {
+	      return e.getResponseBodyAsString();
+
+	  }
+	}
 }
