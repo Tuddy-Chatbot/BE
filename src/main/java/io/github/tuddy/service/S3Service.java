@@ -15,10 +15,14 @@ import org.springframework.stereotype.Service;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
+
 
 @Service
 @RequiredArgsConstructor
@@ -81,6 +85,26 @@ public class S3Service {
     resp.put("expiresAt", signed.expiration().toString());
     return resp;
   }
+
+  public String presignGet(String key) {
+	    // 어떤 파일을 가져올지 정의하는 GetObjectRequest 객체를 생성
+	    GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+	            .bucket(bucket) // 버킷 이름 설정
+	            .key(key)       // 파일의 전체 경로(key) 설정
+	            .build();
+
+	    // Presigned URL의 유효 시간 등 서명에 필요한 설정을 정의
+	    GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
+	            .signatureDuration(ttl) // 기존 ttl 설정(15분)을 재사용
+	            .getObjectRequest(getObjectRequest)
+	            .build();
+
+	    // S3Presigner를 사용해 최종적으로 서명된 요청(URL)을 생성
+	    PresignedGetObjectRequest presignedGetObjectRequest = presigner.presignGetObject(presignRequest);
+
+	    // 생성된 URL 객체에서 문자열 주소를 추출하여 반환
+	    return presignedGetObjectRequest.url().toString();
+	}
 
   private void assertAllowed(String contentType) {
     if (!allowedTypes.isEmpty() && !allowedTypes.contains(contentType)) {
