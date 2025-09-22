@@ -24,11 +24,14 @@ import io.github.tuddy.entity.user.UserAccount;
 import io.github.tuddy.repository.UserAccountRepository;
 import io.github.tuddy.security.AuthUser;
 import io.github.tuddy.service.AuthService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
+@Tag(name = "사용자 인증 API", description = "회원가입, 로그인, 로그아웃 등 사용자 인증 관련 API")
 @RestController
 @RequestMapping("/auth")
 @RequiredArgsConstructor
@@ -41,6 +44,7 @@ public class AuthController {
   private final SecurityContextRepository securityContextRepository = new HttpSessionSecurityContextRepository();
 
   // 계정 중복 체크 -> 저장 성공 시 200, 201 응답, 세션 생성 x
+  @Operation(summary = "로컬 계정 회원가입", description = "아이디, 이메일, 비밀번호 등으로 새로운 사용자를 등록")
   @PostMapping("/register")
   public ResponseEntity<?> register(@Valid @RequestBody RegisterLocalRequest req) {
     var u = authService.registerLocal(req);
@@ -49,6 +53,7 @@ public class AuthController {
   }
 
   // JSESSIONID 쿠키로 인증 유지
+  @Operation(summary = "로그인", description = "아이디(또는 이메일)와 비밀번호로 로그인하여 세션을 생성")
   @PostMapping("/login")
   public ResponseEntity<?> login(@Valid @RequestBody LoginRequest req, HttpServletRequest request, HttpServletResponse response) {
     var token = new UsernamePasswordAuthenticationToken(req.loginIdOrEmail(), req.password());
@@ -76,6 +81,7 @@ public class AuthController {
   }
 
   // 미인증 시 401 오류
+  @Operation(summary = "내 정보 조회", description = "현재 로그인된 사용자의 상세 정보를 조회")
   @GetMapping("/me")
   public ResponseEntity<?> me() {
     Authentication auth = SecurityContextHolder.getContext().getAuthentication();
@@ -106,6 +112,7 @@ public class AuthController {
   }
 
   // 서버 세션 무효화 : CSRF 헤더 필요
+  @Operation(summary = "로그아웃", description = "현재 세션을 만료시켜 로그아웃")
   @PostMapping("/logout")
   public ResponseEntity<?> logout(HttpServletRequest req, HttpServletResponse res) throws Exception {
     req.getSession().invalidate();

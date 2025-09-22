@@ -1,8 +1,7 @@
-package io.github.tuddy.entity.chat;
+package io.github.tuddy.entity.file;
 
 import java.time.LocalDateTime;
 
-import io.github.tuddy.entity.file.UploadedFile;
 import io.github.tuddy.entity.user.UserAccount;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -22,8 +21,9 @@ import lombok.Setter;
 
 @Getter @Setter @Builder
 @NoArgsConstructor @AllArgsConstructor
-@Entity @Table(name="chat_sessions")
-public class ChatSession {
+@Entity @Table(name="uploaded_files")
+public class UploadedFile {
+
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
@@ -31,12 +31,11 @@ public class ChatSession {
     @JoinColumn(name = "user_id", nullable = false)
     private UserAccount userAccount;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "uploaded_file_id")
-    private UploadedFile uploadedFile;
+    @Column(name = "original_filename", nullable = false)
+    private String originalFilename;
 
-    @Column(nullable = false)
-    private String title;
+    @Column(name = "s3_key", nullable = false, unique = true)
+    private String s3Key;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
