@@ -1,21 +1,29 @@
 package io.github.tuddy.service;
 
+import java.util.List;
+import java.util.stream.Collectors;
+
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import io.github.tuddy.dto.ChatMessageResponse;
 import io.github.tuddy.dto.ChatProxyRequest;
 import io.github.tuddy.dto.ChatProxyResponse;
+import io.github.tuddy.dto.ChatSessionResponse;
 import io.github.tuddy.dto.FastApiChatRequest;
-import io.github.tuddy.dto.FastApiResponse; // 1단계에서 생성한 통합 DTO
+import io.github.tuddy.dto.FastApiResponse;
 import io.github.tuddy.entity.chat.ChatMessage;
 import io.github.tuddy.entity.chat.ChatSession;
 import io.github.tuddy.entity.chat.SenderType;
+import io.github.tuddy.entity.file.UploadedFile;
 import io.github.tuddy.entity.user.UserAccount;
 import io.github.tuddy.repository.ChatMessageRepository;
 import io.github.tuddy.repository.ChatSessionRepository;
+import io.github.tuddy.repository.UploadedFileRepository;
 import io.github.tuddy.repository.UserAccountRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,37 +37,74 @@ public class ChatService {
     private final UserAccountRepository userAccountRepository;
     private final ChatSessionRepository sessionRepository;
     private final ChatMessageRepository messageRepository;
+    private final UploadedFileRepository uploadedFileRepository;
     private final ObjectMapper objectMapper;
     private static final int N_TURNS = 7;
 
     @Transactional
-    public ChatProxyResponse processRagChat(Long userId, ChatProxyRequest req) {
-        ChatSession session = findOrCreateSession(userId, req.sessionId(), req.query());
+    public ChatProxyResponse processChat(Long userId, ChatProxyRequest req) {
+        // 세션을 찾거나 새로 생성
+        ChatSession session = findOrCreateSession(userId, req);
         saveMessage(session, SenderType.USER, req.query());
+
         var fastApiReq = new FastApiChatRequest(String.valueOf(userId), String.valueOf(session.getId()), req.query(), N_TURNS);
 
-        String botAnswerJson = ragChatService.relayRag(fastApiReq);
-        String botAnswerText = parseAnswer(botAnswerJson);
+        // 세션에 연결된 파일이 있는지 확인합
+        if (session.getUploadedFile() != null) {
+            log.info("Calling RAG chat for session ID: {}, File ID: {}", session.getId(), session.getUploadedFile().getId());
 
-        saveMessage(session, SenderType.BOT, botAnswerText);
-        return new ChatProxyResponse(session.getId(), botAnswerText);
+            // 연결된 파일이 있으면 RAG 채팅 API를 호출합니다.
+            String botAnswerJson = ragChatService.relayRag(fastApiReq);
+            String botAnswerText = parseAnswer(botAnswerJson);
+            saveMessage(session, SenderType.BOT, botAnswerText);
+            return new ChatProxyResponse(session.getId(), botAnswerText);
+        } else {
+            log.info("Calling Normal chat for session ID: {}", session.getId());
+
+            // 연결된 파일이 없으면 일반 채팅 API를 호출
+            String botAnswerJson = ragChatService.relayNormal(fastApiReq);
+            String botAnswerText = parseAnswer(botAnswerJson);
+            saveMessage(session, SenderType.BOT, botAnswerText);
+            return new ChatProxyResponse(session.getId(), botAnswerText);
+        }
     }
 
-    @Transactional
-    public ChatProxyResponse processNormalChat(Long userId, ChatProxyRequest req) {
-        ChatSession session = findOrCreateSession(userId, req.sessionId(), req.query());
-        saveMessage(session, SenderType.USER, req.query());
-        var fastApiReq = new FastApiChatRequest(String.valueOf(userId), String.valueOf(session.getId()), req.query(), N_TURNS);
+    private ChatSession findOrCreateSession(Long userId, ChatProxyRequest req) {
+        // 1. 기존 세션을 이어가는 경우
+        if (req.sessionId() != null && req.sessionId() != 0) {
+            ChatSession session = sessionRepository.findById(req.sessionId())
+                    .orElseThrow(() -> new IllegalArgumentException("Session not found"));
 
-        String botAnswerJson = ragChatService.relayNormal(fastApiReq);
-        String botAnswerText = parseAnswer(botAnswerJson);
-        saveMessage(session, SenderType.BOT, botAnswerText);
-        return new ChatProxyResponse(session.getId(), botAnswerText);
+            // 2. 만약 이 세션에 파일이 없는데, 이번 요청에 유효한 fileId가 있다면 파일을 연결
+            // fileId가 0인 경우를 무시하도록 조건을 추가
+            if (session.getUploadedFile() == null && req.fileId() != null && req.fileId() != 0) {
+                UploadedFile uploadedFile = uploadedFileRepository.findByIdAndUserAccountId(req.fileId(), userId)
+                    .orElseThrow(() -> new AccessDeniedException("File not found or you don't have permission."));
+                session.setUploadedFile(uploadedFile);
+            }
+            return session;
+        }
+
+        // 3. 새로운 세션을 시작하는 경우
+        UserAccount user = userAccountRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+
+        UploadedFile uploadedFile = null;
+        // fileId가 0인 경우를 무시하도록 조건을 추가
+        if (req.fileId() != null && req.fileId() != 0) {
+            uploadedFile = uploadedFileRepository.findByIdAndUserAccountId(req.fileId(), userId)
+                .orElseThrow(() -> new AccessDeniedException("File not found or you don't have permission."));
+        }
+
+        String title = req.query().length() > 50 ? req.query().substring(0, 50) : req.query();
+        ChatSession newSession = ChatSession.builder()
+                .userAccount(user)
+                .title(title)
+                .uploadedFile(uploadedFile)
+                .build();
+        return sessionRepository.save(newSession);
     }
 
-    /**
-     * FastAPI 응답 JSON 객체에서 'response' 필드의 값을 추출하는 통합 메서드
-     */
     private String parseAnswer(String jsonResponse) {
         if (jsonResponse == null || jsonResponse.isBlank()) {
 			return "답변을 받지 못했습니다.";
@@ -76,22 +121,33 @@ public class ChatService {
         }
     }
 
-    private ChatSession findOrCreateSession(Long userId, Long sessionId, String query) {
-        if (sessionId == null || sessionId == 0) {
-            UserAccount user = userAccountRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
-            String title = query.length() > 50 ? query.substring(0, 50) : query;
-            ChatSession newSession = ChatSession.builder()
-                .userAccount(user).title(title).build();
-            return sessionRepository.save(newSession);
-        }
-        return sessionRepository.findById(sessionId)
-            .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-    }
-
     private void saveMessage(ChatSession session, SenderType sender, String content) {
         ChatMessage message = ChatMessage.builder()
             .session(session).senderType(sender).content(content).build();
         messageRepository.save(message);
     }
+
+    @Transactional(readOnly = true)
+    public List<ChatSessionResponse> getMyChatSessions(Long userId) {
+        return sessionRepository.findAllByUserAccountIdOrderByCreatedAtDesc(userId)
+                .stream()
+                .map(ChatSessionResponse::from)
+                .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public List<ChatMessageResponse> getMessagesBySession(Long userId, Long sessionId) {
+        ChatSession session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+
+        if (!session.getUserAccount().getId().equals(userId)) {
+            throw new AccessDeniedException("You do not have permission to access this chat session.");
+        }
+
+        return messageRepository.findAllBySessionIdOrderByCreatedAtAsc(sessionId)
+                .stream()
+                .map(ChatMessageResponse::from)
+                .collect(Collectors.toList());
+    }
 }
+
