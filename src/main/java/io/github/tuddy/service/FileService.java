@@ -30,7 +30,7 @@ public class FileService {
                 .collect(Collectors.toList());
     }
 
-    // 파일을 삭제합니다. DB와 S3에서 모두 삭제됨
+    // 파일 삭제 : DB와 S3에서 모두 삭제됨
     @Transactional
     public void deleteFile(Long userId, Long fileId) {
         // 1. 본인 소유의 파일이 맞는지 확인하며 파일 정보를 조회

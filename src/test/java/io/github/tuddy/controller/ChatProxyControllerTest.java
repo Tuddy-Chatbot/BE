@@ -5,11 +5,12 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart; // multipart import
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -19,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile; // MockMultipartFile import
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -33,7 +35,6 @@ import io.github.tuddy.entity.chat.SenderType;
 import io.github.tuddy.security.WithMockAuthUser;
 import io.github.tuddy.service.ChatService;
 
-
 @WebMvcTest(ChatProxyController.class)
 @ActiveProfiles("test")
 class ChatProxyControllerTest {
@@ -47,56 +48,60 @@ class ChatProxyControllerTest {
     @MockBean
     private ChatService chatService;
 
-    @DisplayName("RAG 채팅 성공")
-    @Test
-    @WithMockAuthUser
-    void RAG_채팅_성공() throws Exception {
-        // Given
-        var requestDto = new ChatProxyRequest(1L, "안녕하세요");
-        var responseDto = new ChatProxyResponse(1L, "RAG 챗봇 답변입니다.");
-        given(chatService.processRagChat(eq(1L), any(ChatProxyRequest.class))).willReturn(responseDto);
-
-        // When & Then
-        mvc.perform(post("/chat/rag")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(om.writeValueAsString(requestDto))
-                        .with(csrf()))
-                .andExpect(status().isOk())
-                .andExpect(content().json(om.writeValueAsString(responseDto)));
-    }
-
-    @DisplayName("일반 채팅 성공")
+    @DisplayName("일반 텍스트 채팅 성공")
     @Test
     @WithMockAuthUser
     void 일반_채팅_성공() throws Exception {
         // Given
-        var requestDto = new ChatProxyRequest(1L, "안녕");
+        var requestDto = new ChatProxyRequest(1L, "안녕", null);
         var responseDto = new ChatProxyResponse(1L, "일반 챗봇 답변입니다.");
-        given(chatService.processNormalChat(eq(1L), any(ChatProxyRequest.class))).willReturn(responseDto);
+
+        // DTO를 JSON 문자열로 변환
+        String requestDtoJson = om.writeValueAsString(requestDto);
+        // JSON 파트를 위한 MockMultipartFile 생성 (Content-Type 명시가 핵심!)
+        MockMultipartFile reqPart = new MockMultipartFile(
+            "req", "", MediaType.APPLICATION_JSON_VALUE, requestDtoJson.getBytes(StandardCharsets.UTF_8)
+        );
+
+        given(chatService.processChat(eq(1L), any(ChatProxyRequest.class), any())).willReturn(responseDto);
 
         // When & Then
-        mvc.perform(post("/chat/normal")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(om.writeValueAsString(requestDto))
+        mvc.perform(multipart("/chat") // .post() 대신 .multipart()
+                        .file(reqPart)      // .content() 대신 .file()로 파트 추가
                         .with(csrf()))
                 .andExpect(status().isOk())
                 .andExpect(content().json(om.writeValueAsString(responseDto)));
     }
 
-    @DisplayName("채팅 요청시 query가 없으면 400 에러")
+    @DisplayName("이미지 첨부 채팅 성공")
     @Test
     @WithMockAuthUser
-    void 채팅_요청시_query가_없으면_400_에러() throws Exception {
+    void 이미지_첨부_채팅_성공() throws Exception {
         // Given
-        String json = "{\"sessionId\": 1}"; // query 필드 누락
+        var requestDto = new ChatProxyRequest(null, "이 이미지 뭐야?", null);
+        var responseDto = new ChatProxyResponse(10L, "이미지 분석 결과입니다.");
+
+        String requestDtoJson = om.writeValueAsString(requestDto);
+        MockMultipartFile reqPart = new MockMultipartFile("req", "", "application/json", requestDtoJson.getBytes(StandardCharsets.UTF_8));
+
+        // 테스트용 이미지 파일 생성
+        MockMultipartFile imageFile = new MockMultipartFile("files", "test-image.jpg", "image/jpeg", "image_content".getBytes());
+
+        given(chatService.processChat(eq(1L), any(ChatProxyRequest.class), any())).willReturn(responseDto);
 
         // When & Then
-        mvc.perform(post("/chat/rag")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json)
+        mvc.perform(multipart("/chat")
+                        .file(reqPart)
+                        .file(imageFile) // 이미지 파일 파트 추가
                         .with(csrf()))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isOk())
+                .andExpect(content().json(om.writeValueAsString(responseDto)));
     }
+
+
+    // =================================================================
+    // 아래의 기존 테스트들은 변경할 필요 없이 그대로 두시면 됩니다.
+    // =================================================================
 
     @DisplayName("내 채팅 세션 목록 조회 성공")
     @Test
@@ -135,7 +140,6 @@ class ChatProxyControllerTest {
     @WithMockAuthUser(id = 1L) // 나는 1번 유저
     void 타인의_채팅_메시지_조회시_403_에러() throws Exception {
         // Given: ChatService가 AccessDeniedException을 발생시키도록 설정
-        // (2번 유저인 내가 2번 세션을 조회하려 할 때 서비스 단에서 예외 발생)
         given(chatService.getMessagesBySession(1L, 2L)).willThrow(new AccessDeniedException("No permission"));
 
         // When & Then

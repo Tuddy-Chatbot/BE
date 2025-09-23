@@ -6,6 +6,7 @@ import java.util.stream.Collectors;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,32 +43,27 @@ public class ChatService {
     private static final int N_TURNS = 7;
 
     @Transactional
-    public ChatProxyResponse processChat(Long userId, ChatProxyRequest req) {
-        // 세션을 찾거나 새로 생성
+    public ChatProxyResponse processChat(Long userId, ChatProxyRequest req, List<MultipartFile> files) {
+        // 1. 세션 생성 및 사용자 메시지 저장 (기존과 동일)
         ChatSession session = findOrCreateSession(userId, req);
         saveMessage(session, SenderType.USER, req.query());
 
         var fastApiReq = new FastApiChatRequest(String.valueOf(userId), String.valueOf(session.getId()), req.query(), N_TURNS);
 
-        // 세션에 연결된 파일이 있는지 확인합
-        if (session.getUploadedFile() != null) {
-            log.info("Calling RAG chat for session ID: {}, File ID: {}", session.getId(), session.getUploadedFile().getId());
+        // 2. RAG 여부에 따라 API 경로 결정 (기존과 동일)
+        String apiPath = (session.getUploadedFile() != null) ? ragChatService.getChatPath() : ragChatService.getNormalPath();
 
-            // 연결된 파일이 있으면 RAG 채팅 API를 호출합니다.
-            String botAnswerJson = ragChatService.relayRag(fastApiReq);
-            String botAnswerText = parseAnswer(botAnswerJson);
-            saveMessage(session, SenderType.BOT, botAnswerText);
-            return new ChatProxyResponse(session.getId(), botAnswerText);
-        } else {
-            log.info("Calling Normal chat for session ID: {}", session.getId());
+        // 3. (로직 수정) 이미지가 있든 없든 항상 relayChatWithImages 메서드를 호출
+        log.info("Calling FastAPI chat for session ID: {}. Image count: {}",
+                 session.getId(), (files != null ? files.size() : 0));
+        String botAnswerJson = ragChatService.relayChatWithImages(apiPath, fastApiReq, files);
 
-            // 연결된 파일이 없으면 일반 채팅 API를 호출
-            String botAnswerJson = ragChatService.relayNormal(fastApiReq);
-            String botAnswerText = parseAnswer(botAnswerJson);
-            saveMessage(session, SenderType.BOT, botAnswerText);
-            return new ChatProxyResponse(session.getId(), botAnswerText);
-        }
+        // 4. 응답 처리 및 저장 (기존과 동일)
+        String botAnswerText = parseAnswer(botAnswerJson);
+        saveMessage(session, SenderType.BOT, botAnswerText);
+        return new ChatProxyResponse(session.getId(), botAnswerText);
     }
+
 
     private ChatSession findOrCreateSession(Long userId, ChatProxyRequest req) {
         // 1. 기존 세션을 이어가는 경우
@@ -150,4 +146,3 @@ public class ChatService {
                 .collect(Collectors.toList());
     }
 }
-

@@ -20,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
@@ -32,6 +33,9 @@ class S3ServiceTest {
 
     @Mock
     private S3Presigner presigner;
+
+    @Mock
+    private S3Client s3Client;
 
     @BeforeEach
     void setUp() {
@@ -51,30 +55,29 @@ class S3ServiceTest {
         String filename = "test.jpg";
         String contentType = "image/jpeg";
         long contentLength = 500L;
+        String key = "incoming/1/test-key.jpg";
 
         PresignedPutObjectRequest mockPresignedRequest = mock(PresignedPutObjectRequest.class);
         when(mockPresignedRequest.url()).thenReturn(new URL("http://mock.s3.url/test.jpg"));
         when(mockPresignedRequest.signedHeaders()).thenReturn(Map.of());
-
-        // expiration()이 null을 반환하지 않도록 설정합니다.
-        when(mockPresignedRequest.expiration()).thenReturn(Instant.now());
-
+        when(mockPresignedRequest.expiration()).thenReturn(Instant.now().plus(Duration.ofMinutes(15)));
         when(presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenReturn(mockPresignedRequest);
 
         // When
-        Map<String, Object> response = s3Service.presignPut(userId, filename, contentType, contentLength);
+        Map<String, Object> response = s3Service.presignPut(userId, filename, contentType, contentLength, key);
 
         // Then
         assertThat(response).isNotNull();
         assertThat(response.get("url")).isEqualTo("http://mock.s3.url/test.jpg");
-        assertThat(response.get("expiresAt")).isNotNull(); // expiresAt 필드도 null이 아닌지 확인
+        assertThat(response.get("key")).isEqualTo(key);
+        assertThat(response.get("expiresAt")).isNotNull();
     }
 
     @DisplayName("파일 크기 초과시 예외 발생")
     @Test
     void 파일크기_초과시_예외발생() {
         assertThatThrownBy(() ->
-                s3Service.presignPut(1L, "big-file.jpg", "image/jpeg", 2000L)
+                s3Service.presignPut(1L, "big-file.jpg", "image/jpeg", 2000L, "some-key")
         ).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("SIZE_LIMIT");
     }
 
@@ -82,7 +85,7 @@ class S3ServiceTest {
     @Test
     void 허용되지않은_콘텐츠타입시_예외발생() {
         assertThatThrownBy(() ->
-                s3Service.presignPut(1L, "file.txt", "text/plain", 500L)
+                s3Service.presignPut(1L, "file.txt", "text/plain", 500L, "some-key")
         ).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Unsupported content-type");
     }
 }
