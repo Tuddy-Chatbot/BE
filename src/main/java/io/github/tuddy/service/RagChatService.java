@@ -32,21 +32,18 @@ public class RagChatService {
         this.ocrPath = ocrPath;
     }
 
-    // S3 업로드 완료 후 FastAPI에 인덱싱 요청
     public void sendOcrRequest(String userId, String fileKey) {
-        // FastAPI 엔드포인트가 form-data 형식을 기대하므로 MultiValueMap 사용
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("user_id", userId);
         body.add("file_key", fileKey);
 
         try {
             client.post().uri(ocrPath)
-                    .contentType(MediaType.MULTIPART_FORM_DATA) // 또는 APPLICATION_FORM_URLENCODED
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
                     .body(body)
                     .retrieve()
-                    .toBodilessEntity(); // 결과값이 없어도 OK (200 성공 여부만 확인)
+                    .toBodilessEntity();
         } catch (RestClientResponseException e) {
-            // 에러 발생 시 로그를 남기거나 상위 서비스로 예외 전파
             throw new RuntimeException("FastAPI OCR Request Failed: " + e.getResponseBodyAsString());
         }
     }
@@ -83,6 +80,14 @@ public class RagChatService {
             builder.part("session_id", request.sessionId());
             builder.part("query", request.query());
             builder.part("n_turns", String.valueOf(request.nTurns()));
+
+            // 파일 이름 리스트 전송 로직
+            // FastAPI의 List[str] = Form(...) 은 동일한 키("file_names")로 여러 번 보내면 리스트로 인식함
+            if (request.fileNames() != null && !request.fileNames().isEmpty()) {
+                for (String fileName : request.fileNames()) {
+                    builder.part("file_names", fileName);
+                }
+            }
 
             if (files != null && !files.isEmpty()) {
                 for (MultipartFile file : files) {

@@ -44,6 +44,8 @@ public class FileController {
     }
 
     // 업로드 완료 통지 및 처리 요청
+    // 파일 업로드가 완료된 직후 이 API를 호출해야 하며, 작업이 완료(COMPLETED)되어야 채팅에서 해당 파일을 참조 가능
+    @Operation(summary = "파일 처리 및 인덱싱 요청", description = "S3에 업로드된 파일에 대해 OCR 분석 및 벡터 DB 인덱싱 작업을 시작")
     @PostMapping("/{fileId}/process")
     public ResponseEntity<Void> processFile(@PathVariable Long fileId) {
         Long userId = SecurityUtils.requireUserId();
