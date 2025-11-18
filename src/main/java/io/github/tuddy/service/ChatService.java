@@ -3,6 +3,8 @@ package io.github.tuddy.service;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -132,7 +134,7 @@ public class ChatService {
     }
 
     @Transactional(readOnly = true)
-    public List<ChatMessageResponse> getMessagesBySession(Long userId, Long sessionId) {
+    public Slice<ChatMessageResponse> getMessagesBySession(Long userId, Long sessionId, Pageable pageable) {
         ChatSession session = sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("Session not found"));
 
@@ -140,9 +142,8 @@ public class ChatService {
             throw new AccessDeniedException("You do not have permission to access this chat session.");
         }
 
-        return messageRepository.findAllBySessionIdOrderByCreatedAtAsc(sessionId)
-                .stream()
-                .map(ChatMessageResponse::from)
-                .collect(Collectors.toList());
+        // ★ 수정됨: Repository와 동일하게 Desc 호출
+        return messageRepository.findAllBySessionIdOrderByCreatedAtDesc(sessionId, pageable)
+                .map(ChatMessageResponse::from);
     }
 }

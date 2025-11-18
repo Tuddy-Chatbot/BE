@@ -2,6 +2,9 @@ package io.github.tuddy.controller;
 
 import java.util.List;
 
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,7 +25,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-
 
 @Tag(name = "채팅 API", description = "챗봇과의 대화 및 기록 관리 관련 API")
 @RestController
@@ -60,6 +62,17 @@ public class ChatProxyController {
     public ResponseEntity<List<ChatMessageResponse>> getChatMessages(@PathVariable Long sessionId) {
         Long userId = SecurityUtils.requireUserId();
         List<ChatMessageResponse> messages = chatService.getMessagesBySession(userId, sessionId);
+        return ResponseEntity.ok(messages);
+    }
+
+    // ex) GET /chat/sessions/1/messages?page=0&size=20
+    @GetMapping("/sessions/{sessionId}/messages")
+    public ResponseEntity<Slice<ChatMessageResponse>> getChatMessages(
+            @PathVariable Long sessionId,
+            @PageableDefault(size = 20) Pageable pageable) {
+
+        Long userId = SecurityUtils.requireUserId();
+        Slice<ChatMessageResponse> messages = chatService.getMessagesBySession(userId, sessionId, pageable);
         return ResponseEntity.ok(messages);
     }
 

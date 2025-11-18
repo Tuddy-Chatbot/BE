@@ -5,6 +5,8 @@ import java.time.LocalDateTime;
 import io.github.tuddy.entity.user.UserAccount;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -39,6 +41,11 @@ public class UploadedFile {
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 20)
+    @Builder.Default // 빌더 패턴 사용 시 기본값 적용
+    private FileStatus status = FileStatus.PENDING;
 
     @PrePersist
     void prePersist() {

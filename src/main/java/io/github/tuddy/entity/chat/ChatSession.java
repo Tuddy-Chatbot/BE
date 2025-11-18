@@ -2,7 +2,6 @@ package io.github.tuddy.entity.chat;
 
 import java.time.LocalDateTime;
 
-import io.github.tuddy.entity.file.UploadedFile;
 import io.github.tuddy.entity.user.UserAccount;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -30,10 +29,6 @@ public class ChatSession {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
     private UserAccount userAccount;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "uploaded_file_id")
-    private UploadedFile uploadedFile;
 
     @Column(nullable = false)
     private String title;

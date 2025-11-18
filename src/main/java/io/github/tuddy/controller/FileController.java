@@ -6,6 +6,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -40,5 +41,13 @@ public class FileController {
         Long userId = SecurityUtils.requireUserId();
         fileService.deleteFile(userId, fileId);
         return ResponseEntity.noContent().build(); // 성공적으로 삭제 시 204 No Content 응답
+    }
+
+    // 업로드 완료 통지 및 처리 요청
+    @PostMapping("/{fileId}/process")
+    public ResponseEntity<Void> processFile(@PathVariable Long fileId) {
+        Long userId = SecurityUtils.requireUserId();
+        fileService.processUploadedFile(userId, fileId);
+        return ResponseEntity.ok().build();
     }
 }

@@ -7,6 +7,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.multipart.MultipartFile;
@@ -15,82 +17,96 @@ import io.github.tuddy.dto.FastApiChatRequest;
 
 @Service
 public class RagChatService {
-  private final RestClient client;
-  private final String chatPath;
-  private final String normalPath;
+    private final RestClient client;
+    private final String chatPath;
+    private final String normalPath;
+    private final String ocrPath;
 
-  public RagChatService(@Qualifier("ragRestClient") RestClient client,
-                        @Value("${rag.api.chat-path:/rag/chat}") String chatPath,
-                        @Value("${rag.api.normal-path:/normal/chat}") String normalPath) {
-    this.client = client;
-    this.chatPath = chatPath;
-    this.normalPath = normalPath;
-  }
-
-  public String relayRag(FastApiChatRequest request) {
-    try {
-      return client.post().uri(chatPath)
-        .contentType(MediaType.APPLICATION_JSON)
-        .body(request) // 수정된 요청 DTO 사용
-        .retrieve()
-        .body(String.class);
-    } catch (RestClientResponseException e) {
-      return e.getResponseBodyAsString();
+    public RagChatService(@Qualifier("ragRestClient") RestClient client,
+                          @Value("${rag.api.chat-path:/rag/chat}") String chatPath,
+                          @Value("${rag.api.normal-path:/normal/chat}") String normalPath,
+                          @Value("${rag.api.ocr-path:/rag/vectordb/ocr-and-add-from-s3}") String ocrPath) {
+        this.client = client;
+        this.chatPath = chatPath;
+        this.normalPath = normalPath;
+        this.ocrPath = ocrPath;
     }
-  }
 
-  public String relayNormal(FastApiChatRequest request) {
-	     try {
-	      return client.post().uri(normalPath)
-	        .contentType(MediaType.APPLICATION_JSON)
-	        .body(request) // 수정된 요청 DTO 사용
-	        .retrieve()
-	        .body(String.class);
-	    } catch (RestClientResponseException e) {
-	      return e.getResponseBodyAsString();
-	  }
-	}
+    // S3 업로드 완료 후 FastAPI에 인덱싱 요청
+    public void sendOcrRequest(String userId, String fileKey) {
+        // FastAPI 엔드포인트가 form-data 형식을 기대하므로 MultiValueMap 사용
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("user_id", userId);
+        body.add("file_key", fileKey);
 
-  // 텍스트 데이터와 이미지 파일 목록을 함께 FastAPI로 전송 (multipart/form-data)
-  public String relayChatWithImages(String path, FastApiChatRequest request, List<MultipartFile> files) {
-      try {
-          // 1. multipart 요청 본문을 만들어주는 빌더를 생성
-          MultipartBodyBuilder builder = new MultipartBodyBuilder();
+        try {
+            client.post().uri(ocrPath)
+                    .contentType(MediaType.MULTIPART_FORM_DATA) // 또는 APPLICATION_FORM_URLENCODED
+                    .body(body)
+                    .retrieve()
+                    .toBodilessEntity(); // 결과값이 없어도 OK (200 성공 여부만 확인)
+        } catch (RestClientResponseException e) {
+            // 에러 발생 시 로그를 남기거나 상위 서비스로 예외 전파
+            throw new RuntimeException("FastAPI OCR Request Failed: " + e.getResponseBodyAsString());
+        }
+    }
 
-          String sessionId = request.sessionId() != null ? request.sessionId().toString() : "";
+    public String relayRag(FastApiChatRequest request) {
+        try {
+            return client.post().uri(chatPath)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(String.class);
+        } catch (RestClientResponseException e) {
+            return e.getResponseBodyAsString();
+        }
+    }
 
-          // 2. 텍스트 데이터를 파트(part)로 추가 : FastAPI의 Form(...) 파라미터 이름과 일치해야 함
-          builder.part("user_id", request.userId());
-          builder.part("session_id", request.sessionId());
-          builder.part("query", request.query());
-          builder.part("n_turns", String.valueOf(request.nTurns())); // 숫자를 문자열로 변환하여 추가
+    public String relayNormal(FastApiChatRequest request) {
+        try {
+            return client.post().uri(normalPath)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(String.class);
+        } catch (RestClientResponseException e) {
+            return e.getResponseBodyAsString();
+        }
+    }
 
-          // 3. 이미지 파일들을 파트(part)로 추가
-          if (files != null && !files.isEmpty()) {
-              for (MultipartFile file : files) {
-                  // FastAPI의 files: List[UploadFile] = File(...) 파라미터 이름("files")과 일치해야 함
-                  builder.part("files", file.getResource());
-              }
-          }
+    public String relayChatWithImages(String path, FastApiChatRequest request, List<MultipartFile> files) {
+        try {
+            MultipartBodyBuilder builder = new MultipartBodyBuilder();
 
-          // 4. RestClient를 사용하여 multipart/form-data 형식으로 POST 요청
-          return client.post()
-                  .uri(path) // 동적으로 RAG 경로 또는 일반 경로를 사용
-                  .contentType(MediaType.MULTIPART_FORM_DATA)
-                  .body(builder.build()) // 완성된 요청 본문을 설정
-                  .retrieve()
-                  .body(String.class);
+            builder.part("user_id", request.userId());
+            builder.part("session_id", request.sessionId());
+            builder.part("query", request.query());
+            builder.part("n_turns", String.valueOf(request.nTurns()));
 
-      } catch (RestClientResponseException e) {
-          return e.getResponseBodyAsString();
-      }
-  }
+            if (files != null && !files.isEmpty()) {
+                for (MultipartFile file : files) {
+                    builder.part("files", file.getResource());
+                }
+            }
 
-  public String getChatPath() {
-      return this.chatPath;
-  }
+            return client.post()
+                    .uri(path)
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(builder.build())
+                    .retrieve()
+                    .body(String.class);
 
-  public String getNormalPath() {
-      return this.normalPath;
-  }
+        } catch (RestClientResponseException e) {
+            return e.getResponseBodyAsString();
+        }
+    }
+
+    public String getChatPath() {
+        return this.chatPath;
+    }
+
+    public String getNormalPath() {
+        return this.normalPath;
+    }
 }
