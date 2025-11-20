@@ -1,4 +1,3 @@
-// 파일 위치: src/test/java/io/github/tuddy/service/FileServiceTest.java
 package io.github.tuddy.service;
 
 import static org.assertj.core.api.Assertions.assertThat;

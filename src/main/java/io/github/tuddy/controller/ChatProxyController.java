@@ -2,13 +2,18 @@ package io.github.tuddy.controller;
 
 import java.util.List;
 
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import io.github.tuddy.dto.ChatMessageResponse;
 import io.github.tuddy.dto.ChatProxyRequest;
@@ -29,17 +34,19 @@ public class ChatProxyController {
 
     private final ChatService chatService;
 
-    // /rag와 /normal 엔드포인트를 하나로 통합한 단일 엔드포인트
-    @Operation(summary = "챗봇과 대화", description = "챗봇과 대화를 시작하거나 이어갑니다. 요청 시 fileId를 포함하면 RAG 기반으로, 포함하지 않으면 일반 대화로 동작합니다.")
-    @PostMapping
-    public ResponseEntity<ChatProxyResponse> chat(@Valid @RequestBody ChatProxyRequest req) {
+    @Operation(summary = "챗봇과 대화", description = "챗봇과 대화 : 이미지 파일을 첨부할 수 있으며, 요청 시 fileId를 포함하면 RAG 기반으로 동작")
+    @PostMapping(consumes = { MediaType.MULTIPART_FORM_DATA_VALUE })
+    public ResponseEntity<ChatProxyResponse> chat(
+            @RequestPart("req") @Valid ChatProxyRequest req,
+            @RequestPart(value = "files", required = false) List<MultipartFile> files) {
+
         Long uid = SecurityUtils.requireUserId();
-        // ★★★ 새로 만든 통합 서비스 메서드를 호출합니다. ★★★
-        ChatProxyResponse response = chatService.processChat(uid, req);
+        ChatProxyResponse response = chatService.processChat(uid, req, files);
+
         return ResponseEntity.ok(response);
     }
 
-    @Operation(summary = "내 채팅방 목록 조회", description = "현재 로그인한 사용자의 모든 채팅방 목록을 최신순으로 조회합니다.")
+    @Operation(summary = "내 채팅방 목록 조회", description = "현재 로그인한 사용자의 모든 채팅방 목록을 최신순으로 조회")
     @GetMapping("/sessions")
     public ResponseEntity<List<ChatSessionResponse>> getMyChatSessions() {
         Long userId = SecurityUtils.requireUserId();
@@ -47,12 +54,17 @@ public class ChatProxyController {
         return ResponseEntity.ok(sessions);
     }
 
-    @Operation(summary = "특정 채팅방의 메시지 전체 조회", description = "특정 채팅방에 속한 모든 메시지를 시간순으로 조회합니다.")
+    // 페이징 메서드만 남김
+    @Operation(summary = "특정 채팅방의 메시지 조회 (페이징)", description = "특정 채팅방의 메시지를 최신순으로 페이징하여 조회합니다. (기본 20개)")
     @GetMapping("/sessions/{sessionId}/messages")
-    public ResponseEntity<List<ChatMessageResponse>> getChatMessages(@PathVariable Long sessionId) {
+    public ResponseEntity<Slice<ChatMessageResponse>> getChatMessages(
+            @PathVariable Long sessionId,
+            @PageableDefault(size = 20) Pageable pageable) {
+
         Long userId = SecurityUtils.requireUserId();
-        List<ChatMessageResponse> messages = chatService.getMessagesBySession(userId, sessionId);
+        // ChatService도 Pageable을 받는 메서드 하나만 존재
+        Slice<ChatMessageResponse> messages = chatService.getMessagesBySession(userId, sessionId, pageable);
         return ResponseEntity.ok(messages);
     }
-}
 
+}

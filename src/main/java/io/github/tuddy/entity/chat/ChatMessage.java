@@ -2,6 +2,7 @@ package io.github.tuddy.entity.chat;
 
 import java.time.LocalDateTime;
 
+import io.github.tuddy.entity.file.UploadedFile;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -30,6 +31,10 @@ public class ChatMessage {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "session_id", nullable = false)
     private ChatSession session;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "uploaded_file_id")
+    private UploadedFile uploadedFile;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "sender_type", nullable = false, length = 20)
