@@ -28,7 +28,7 @@ public class CustomOAuth2UserService implements OAuth2UserService<OAuth2UserRequ
   @Transactional
   public OAuth2User loadUser(OAuth2UserRequest req) throws OAuth2AuthenticationException {
     OAuth2User user = delegate.loadUser(req);
-    String regId = req.getClientRegistration().getRegistrationId(); // google | naver | kakao
+    String regId = req.getClientRegistration().getRegistrationId(); // naver | kakao
     Map<String, Object> attrs = user.getAttributes();
 
     String providerUserId;
@@ -58,14 +58,15 @@ public class CustomOAuth2UserService implements OAuth2UserService<OAuth2UserRequ
     AuthProvider providerEnum = AuthProvider.valueOf(regId.toUpperCase());
 
     var existing = users.findByProviderAndProviderUserId(providerEnum, providerUserId);
+    UserAccount ua;
 
     if (existing.isEmpty()) {
-      // 닉네임이 null일 경우를 대비한 방어 로직
+      // 신규 사용자 생성 로직
       if (displayName == null || displayName.isBlank()) {
           displayName = "User-" + UUID.randomUUID().toString().substring(0, 8);
       }
 
-      UserAccount ua = UserAccount.builder()
+      ua = UserAccount.builder()
           .provider(providerEnum)
           .providerUserId(providerUserId)
           .email(email)
@@ -73,9 +74,23 @@ public class CustomOAuth2UserService implements OAuth2UserService<OAuth2UserRequ
           .role(UserRole.USER)
           .status(UserStatus.ACTIVE)
           .build();
-      users.save(ua);
+    } else {
+      // 기존 사용자 정보가 존재할 경우의 업데이트 로직
+      ua = existing.get();
+
+      // 이메일 업데이트
+      if (email != null && !email.equals(ua.getEmail())) {
+          ua.setEmail(email);
+      }
+      // 표시 이름 업데이트 (null/공백이 아니고, 값이 변경되었을 경우만)
+      if (displayName != null && !displayName.isBlank() && !displayName.equals(ua.getDisplayName())) {
+          ua.setDisplayName(displayName);
+      }
     }
+
+    // 신규 생성 또는 변경된 정보가 있다면 저장 (save가 @PreUpdate를 트리거함)
+    users.save(ua);
+
     return user;
   }
 }
-

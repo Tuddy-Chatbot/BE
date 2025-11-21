@@ -28,7 +28,7 @@ import lombok.RequiredArgsConstructor;
 public class UploadController {
 
     private final S3Service s3;
-    private final FileService fileService; // ★ 변경: Repository 대신 Service 사용
+    private final FileService fileService;
 
     @Operation(summary = "파일 업로드를 위한 Presigned URL 생성", description = "S3에 파일을 직접 업로드할 수 있는 1회용 URL과 DB에 저장될 파일 정보를 생성합니다.")
     @Parameter(name = "filename", description = "업로드할 원본 파일 이름", required = true, example = "lecture.pdf")

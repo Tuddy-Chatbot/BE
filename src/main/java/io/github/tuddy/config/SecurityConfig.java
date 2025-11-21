@@ -58,6 +58,7 @@ public class SecurityConfig {
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 // 프론트 연동 후 수정 필요
                 .ignoringRequestMatchers("/auth/register", "/auth/login")
+                // .ignoringRequestMatchers("/**")
             )
             .addFilterAfter(new CsrfCookieFilter(), CsrfFilter.class)
             .cors(Customizer.withDefaults())
