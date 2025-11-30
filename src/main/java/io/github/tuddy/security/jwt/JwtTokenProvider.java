@@ -68,7 +68,7 @@ public class JwtTokenProvider {
                 .subject(userPrincipal.getUsername()) // loginId
                 .claim("auth", authorities)
                 .claim("uid", userPrincipal.getId())
-                .claim(TYPE_CLAIM, type) // ★ 핵심: 토큰 용도(ACCESS/REFRESH) 기록
+                .claim(TYPE_CLAIM, type) // 토큰 용도(ACCESS/REFRESH) 기록
                 .issuedAt(new Date(now))
                 .expiration(validity)
                 .signWith(key)
@@ -96,7 +96,7 @@ public class JwtTokenProvider {
         return new UsernamePasswordAuthenticationToken(principal, token, authorities);
     }
 
-    // [추가 5] Access Token 전용 검증 메서드
+    // Access Token 전용 검증 메서드
     // API 요청 시 헤더에 들어온 토큰이 진짜 Access Token인지 확인합니다. (Refresh Token 차단용)
     public boolean validateAccessToken(String token) {
         try {

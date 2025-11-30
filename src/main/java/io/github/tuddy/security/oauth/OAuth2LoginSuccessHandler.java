@@ -38,8 +38,7 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
     public void onAuthenticationSuccess(HttpServletRequest req, HttpServletResponse res, Authentication auth) throws IOException {
         OAuth2User oAuth2User = (OAuth2User) auth.getPrincipal();
 
-        // 1. [수정됨] CustomOAuth2UserService에서 넣어준 "db_id" 추출
-        // 이 방식은 이메일 중복/누락 문제 없이 100% 정확하게 내 DB의 사용자를 찾을 수 있습니다.
+        // 1. CustomOAuth2UserService에서 넣어준 "db_id" 추출
         Long userId = (Long) oAuth2User.getAttribute("db_id");
 
         if (userId == null) {
@@ -53,8 +52,7 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
         UserAccount user = users.findById(userId)
                 .orElseThrow(() -> new IllegalStateException("User not found (ID: " + userId + ")"));
 
-        // 3. [중요] 토큰 발급을 위한 AuthUser 객체 생성
-        // JwtTokenProvider는 AuthUser 타입의 Principal을 기대하므로 변환이 필수입니다.
+        // 3. 토큰 발급을 위한 AuthUser 객체 생성 : JwtTokenProvider는 AuthUser 타입의 Principal을 기대하므로 변환이 필수
         AuthUser authUser = new AuthUser(
                 user.getId(),
                 user.getLoginId() != null ? user.getLoginId() : user.getEmail(), // username

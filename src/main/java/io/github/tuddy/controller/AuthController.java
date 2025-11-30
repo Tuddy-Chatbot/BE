@@ -1,5 +1,6 @@
 package io.github.tuddy.controller;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -20,6 +21,7 @@ import io.github.tuddy.security.SecurityUtils;
 import io.github.tuddy.security.jwt.JwtTokenProvider;
 import io.github.tuddy.service.AuthService;
 import io.github.tuddy.service.TokenService;
+import io.jsonwebtoken.JwtException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -60,16 +62,25 @@ public class AuthController {
     @Operation(summary = "토큰 갱신 (Refresh)", description = "Refresh Token을 사용하여 Access Token 재발급 (RTR 적용)")
     @PostMapping("/refresh")
     public ResponseEntity<TokenResponse> refresh(@RequestBody RefreshTokenRequest req) {
+        // 1. 유효성 검사 실패 시 401
         if (!jwtTokenProvider.validateToken(req.refreshToken())) {
-            return ResponseEntity.status(401).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
-        Authentication auth = jwtTokenProvider.getAuthentication(req.refreshToken());
 
-        // Refresh Token Rotation: 기존 토큰 삭제 후 새 세트 발급
-        String newRefreshToken = tokenService.rotateRefreshToken(req.refreshToken(), auth);
-        String newAccessToken = jwtTokenProvider.createAccessToken(auth);
+        try {
+            Authentication auth = jwtTokenProvider.getAuthentication(req.refreshToken());
 
-        return ResponseEntity.ok(new TokenResponse(newAccessToken, newRefreshToken));
+            // 2. 로테이션 로직 수행
+            // DB에 없으면 TokenService가 IllegalArgumentException을 던짐 -> catch로 잡음
+            String newRefreshToken = tokenService.rotateRefreshToken(req.refreshToken(), auth);
+            String newAccessToken = jwtTokenProvider.createAccessToken(auth);
+
+            return ResponseEntity.ok(new TokenResponse(newAccessToken, newRefreshToken));
+
+        } catch (IllegalArgumentException | JwtException e) {
+            // 3. 유효하지 않은 토큰(DB 없음 등)인 경우 401 반환
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
     }
 
     @Operation(summary = "내 정보 조회")
