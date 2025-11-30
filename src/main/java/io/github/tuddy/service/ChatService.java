@@ -47,7 +47,7 @@ public class ChatService {
 
     @Transactional
     public ChatProxyResponse processChat(Long userId, ChatProxyRequest req, List<MultipartFile> files) {
-        // 1. 세션 찾기 또는 생성 (파일 연결 로직 제거됨)
+        // 1. 세션 찾기 또는 생성 (본인 소유 검증 포함)
         ChatSession session = findOrCreateSession(userId, req);
 
         // 2. 신규 파일 처리 : 이번 요청에 명시적으로 연결된 파일이 있다면 확인 및 검증
@@ -105,10 +105,16 @@ public class ChatService {
     }
 
     private ChatSession findOrCreateSession(Long userId, ChatProxyRequest req) {
-        // 1. 기존 세션 조회
+        // 1. 기존 세션 조회 요청 시
         if (req.sessionId() != null && req.sessionId() != 0) {
-            return sessionRepository.findById(req.sessionId())
+            ChatSession session = sessionRepository.findById(req.sessionId())
                     .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+
+            // 요청한 세션이 본인 맞는지 확인 (IDOR 방지)
+            if (!session.getUserAccount().getId().equals(userId)) {
+                throw new AccessDeniedException("You do not have permission to access this chat session.");
+            }
+            return session;
         }
 
         // 2. 새로운 세션 생성 (파일 연결 로직 완전히 제거 - 순수 대화방)

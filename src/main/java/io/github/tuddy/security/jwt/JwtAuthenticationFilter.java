@@ -21,10 +21,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         String token = resolveToken(request);
-        if (StringUtils.hasText(token) && tokenProvider.validateToken(token)) {
+
+        // validateToken -> validateAccessToken 으로 변경
+        if (StringUtils.hasText(token) && tokenProvider.validateAccessToken(token)) {
             Authentication auth = tokenProvider.getAuthentication(token);
             SecurityContextHolder.getContext().setAuthentication(auth);
         }
+
         chain.doFilter(request, response);
     }
 

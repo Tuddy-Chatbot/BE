@@ -2,6 +2,7 @@ package io.github.tuddy.service;
 
 import java.time.LocalDateTime;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,18 +20,26 @@ public class TokenService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtTokenProvider jwtTokenProvider;
 
+    // 하드코딩이 아닌 application.properties의 값 주입
+    @Value("${jwt.refresh.expiration}")
+    private long refreshExpirationMs;
+
     @Transactional
     public String issueRefreshToken(Authentication auth) {
         AuthUser user = (AuthUser) auth.getPrincipal();
-        // 기존 토큰이 있다면 삭제 (단일 기기 로그인 정책일 경우. 다중 기기면 유지)
         refreshTokenRepository.deleteByUserId(user.getId());
 
         String token = jwtTokenProvider.createRefreshToken(auth);
+
+        // 설정값 기반으로 만료시간 계산
+        LocalDateTime expiresAt = LocalDateTime.now()
+                .plusNanos(refreshExpirationMs * 1_000_000); // ms -> nanos 변환
+
         RefreshToken rt = RefreshToken.builder()
                 .userId(user.getId())
                 .tokenValue(token)
                 .issuedAt(LocalDateTime.now())
-                .expiresAt(LocalDateTime.now().plusDays(7))
+                .expiresAt(expiresAt)
                 .build();
         refreshTokenRepository.save(rt);
         return token;

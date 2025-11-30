@@ -12,11 +12,11 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Component;
 
 import io.github.tuddy.security.AuthUser;
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
@@ -27,6 +27,11 @@ public class JwtTokenProvider {
     private final SecretKey key;
     private final long accessExpiration;
     private final long refreshExpiration;
+
+    // 토큰 타입을 구분하기 위한 상수 정의
+    private static final String TYPE_CLAIM = "typ";
+    private static final String TYPE_ACCESS = "ACCESS";
+    private static final String TYPE_REFRESH = "REFRESH";
 
     public JwtTokenProvider(@Value("${jwt.secret-key}") String secretKey,
                             @Value("${jwt.access.expiration}") long accessExpiration,
@@ -39,15 +44,18 @@ public class JwtTokenProvider {
 
     // Access Token 생성
     public String createAccessToken(Authentication authentication) {
-        return createToken(authentication, accessExpiration);
+        // [수정 2] ACCESS 타입 지정
+        return createToken(authentication, accessExpiration, TYPE_ACCESS);
     }
 
     // Refresh Token 생성
     public String createRefreshToken(Authentication authentication) {
-        return createToken(authentication, refreshExpiration);
+        // REFRESH 타입 지정
+        return createToken(authentication, refreshExpiration, TYPE_REFRESH);
     }
 
-    private String createToken(Authentication authentication, long expiration) {
+    // 내부 메서드에 type 파라미터 추가
+    private String createToken(Authentication authentication, long expiration, String type) {
         AuthUser userPrincipal = (AuthUser) authentication.getPrincipal();
         String authorities = authentication.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
@@ -59,7 +67,8 @@ public class JwtTokenProvider {
         return Jwts.builder()
                 .subject(userPrincipal.getUsername()) // loginId
                 .claim("auth", authorities)
-                .claim("uid", userPrincipal.getId())  // userId 추가
+                .claim("uid", userPrincipal.getId())
+                .claim(TYPE_CLAIM, type) // ★ 핵심: 토큰 용도(ACCESS/REFRESH) 기록
                 .issuedAt(new Date(now))
                 .expiration(validity)
                 .signWith(key)
@@ -81,13 +90,31 @@ public class JwtTokenProvider {
 
         Long userId = claims.get("uid", Long.class);
 
-        // AuthUser 객체 생성 (비밀번호는 토큰에 없으므로 빈 문자열 처리)
+        // AuthUser 객체 생성
         AuthUser principal = new AuthUser(userId, claims.getSubject(), "", authorities);
 
         return new UsernamePasswordAuthenticationToken(principal, token, authorities);
     }
 
-    // 토큰 유효성 검증
+    // [추가 5] Access Token 전용 검증 메서드
+    // API 요청 시 헤더에 들어온 토큰이 진짜 Access Token인지 확인합니다. (Refresh Token 차단용)
+    public boolean validateAccessToken(String token) {
+        try {
+            Claims claims = Jwts.parser()
+                    .verifyWith(key)
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload();
+
+            // 토큰 타입이 ACCESS가 아니면 유효하지 않음
+            return TYPE_ACCESS.equals(claims.get(TYPE_CLAIM));
+        } catch (JwtException | IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    // 일반 토큰 유효성 검증 (서명 및 만료 여부만 확인)
+    // Refresh Token 검증이나 로그아웃 시 등에 사용
     public boolean validateToken(String token) {
         try {
             Jwts.parser()
@@ -96,7 +123,6 @@ public class JwtTokenProvider {
                 .parseSignedClaims(token);
             return true;
         } catch (JwtException | IllegalArgumentException e) {
-            // io.jsonwebtoken.JwtException 및 하위 예외(ExpiredJwtException 등)를 여기서 잡음
             return false;
         }
     }
