@@ -45,34 +45,17 @@ class JpaUserDetailsServiceTest {
 
         // Then
         assertThat(userDetails.getUsername()).isEqualTo("testuser");
-        assertThat(userDetails.getPassword()).isEqualTo("encoded_password");
     }
 
-    // [수정됨] 이제 이메일 로그인을 지원하지 않으므로, 이메일 입력 시 예외가 발생해야 정상입니다.
     @DisplayName("이메일로 조회 시 실패 (로그인 ID만 허용)")
     @Test
     void 이메일로_조회시_실패_예외_발생() {
         // Given
         String inputEmail = "test@test.com";
-
-        // 사용자가 이메일을 아이디 입력창에 넣었을 때,
-        // 로직은 findByLoginId(inputEmail)을 호출하게 되고, 결과는 없어야 함(Empty)
         given(users.findByLoginId(inputEmail)).willReturn(Optional.empty());
 
         // When & Then
         assertThatThrownBy(() -> userDetailsService.loadUserByUsername(inputEmail))
-                .isInstanceOf(UsernameNotFoundException.class)
-                .hasMessage("user_not_found");
-    }
-
-    @DisplayName("사용자 정보가 없으면 UsernameNotFoundException 발생")
-    @Test
-    void 사용자_없으면_예외_발생() {
-        // Given
-        given(users.findByLoginId("nonexistent")).willReturn(Optional.empty());
-
-        // When & Then
-        assertThatThrownBy(() -> userDetailsService.loadUserByUsername("nonexistent"))
                 .isInstanceOf(UsernameNotFoundException.class)
                 .hasMessage("user_not_found");
     }

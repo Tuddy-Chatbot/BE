@@ -50,7 +50,7 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<TokenResponse> login(@Valid @RequestBody LoginRequest req) {
         Authentication auth = authManager.authenticate(
-            new UsernamePasswordAuthenticationToken(req.loginIdOrEmail(), req.password())
+            new UsernamePasswordAuthenticationToken(req.loginId(), req.password())
         );
 
         String accessToken = jwtTokenProvider.createAccessToken(auth);

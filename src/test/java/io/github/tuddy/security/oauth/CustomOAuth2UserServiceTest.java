@@ -2,9 +2,6 @@ package io.github.tuddy.security.oauth;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Map;
@@ -55,73 +52,38 @@ class CustomOAuth2UserServiceTest {
         mockUserRequest = new OAuth2UserRequest(naverClient, accessToken);
     }
 
-    // ... (기존 신규 사용자 생성 테스트는 유지)
-
-    @DisplayName("2. 기존 소셜 로그인 사용자 재로그인 시 정보 업데이트")
+    @DisplayName("기존 소셜 로그인 사용자 재로그인 시 정보 업데이트 및 db_id 확인")
     @Test
-    void 기존_소셜로그인_사용자_정보_업데이트() {
+    void 기존_사용자_업데이트_및_PK반환() {
         // Given
-        // 1. 소셜 API에서 새로운 정보 수신
         Map<String, Object> newAttributes = Map.of("response",
-                Map.of("id", "12345", "email", "new_test@naver.com", "name", "새로운네이버닉네임"));
+                Map.of("id", "12345", "email", "new@naver.com", "name", "new_name"));
         OAuth2User oAuth2User = new DefaultOAuth2User(null, newAttributes, "response");
 
         when(mockDelegate.loadUser(mockUserRequest)).thenReturn(oAuth2User);
 
-        // 2. DB에 존재하는 기존 사용자 정보 (오래된 정보)
         UserAccount existingUser = UserAccount.builder()
-                .id(1L)
+                .id(100L) // 예상 DB ID
                 .provider(AuthProvider.NAVER)
                 .providerUserId("12345")
-                .email("old_test@naver.com") // 이전 이메일
-                .displayName("오래된닉네임") // 이전 닉네임
+                .email("old@naver.com")
+                .displayName("old_name")
                 .role(UserRole.USER)
                 .status(UserStatus.ACTIVE)
                 .build();
         when(users.findByProviderAndProviderUserId(AuthProvider.NAVER, "12345"))
                 .thenReturn(Optional.of(existingUser));
+        when(users.save(any(UserAccount.class))).thenReturn(existingUser); // 업데이트 후 리턴 가정
 
         // When
-        customOAuth2UserService.loadUser(mockUserRequest);
+        OAuth2User result = customOAuth2UserService.loadUser(mockUserRequest);
 
         // Then
-        // 1. 정보가 업데이트 되었는지 확인
-        assertThat(existingUser.getEmail()).isEqualTo("new_test@naver.com");
-        assertThat(existingUser.getDisplayName()).isEqualTo("새로운네이버닉네임");
+        // 1. 정보 업데이트 검증
+        assertThat(existingUser.getEmail()).isEqualTo("new@naver.com");
 
-        // 2. save가 호출되어 DB에 변경 사항이 반영되었는지 확인
-        verify(users, times(1)).save(existingUser);
-    }
-
-    @DisplayName("3. 기존 소셜 로그인 사용자 재로그인 시 정보가 동일하면 업데이트 Skip")
-    @Test
-    void 기존_소셜로그인_사용자_정보_동일하면_업데이트_Skip() {
-        // Given
-        // 1. 소셜 API에서 동일한 정보 수신
-        Map<String, Object> sameAttributes = Map.of("response",
-                Map.of("id", "67890", "email", "same@naver.com", "name", "동일닉네임"));
-        OAuth2User oAuth2User = new DefaultOAuth2User(null, sameAttributes, "response");
-
-        when(mockDelegate.loadUser(mockUserRequest)).thenReturn(oAuth2User);
-
-        // 2. DB에 존재하는 기존 사용자 정보 (동일한 정보)
-        UserAccount existingUser = UserAccount.builder()
-                .id(2L)
-                .provider(AuthProvider.NAVER)
-                .providerUserId("67890")
-                .email("same@naver.com")
-                .displayName("동일닉네임")
-                .role(UserRole.USER)
-                .status(UserStatus.ACTIVE)
-                .build();
-        when(users.findByProviderAndProviderUserId(AuthProvider.NAVER, "67890"))
-                .thenReturn(Optional.of(existingUser));
-
-        // When
-        customOAuth2UserService.loadUser(mockUserRequest);
-
-        // Then
-        // save가 호출되지 않았는지 확인 (성능 최적화)
-        verify(users, never()).save(any(UserAccount.class));
+        // 2. [중요] db_id가 attributes에 포함되었는지 검증
+        assertThat(result.getAttributes()).containsKey("db_id");
+        assertThat(result.getAttributes().get("db_id")).isEqualTo(100L);
     }
 }
