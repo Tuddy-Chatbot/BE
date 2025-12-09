@@ -47,10 +47,10 @@ public class ChatService {
 
     @Transactional
     public ChatProxyResponse processChat(Long userId, ChatProxyRequest req, List<MultipartFile> files) {
-        // 1. 세션 찾기 또는 생성 (파일 연결 로직 제거됨)
+        // 1. 세션 찾기 또는 생성 (본인 소유 검증 포함)
         ChatSession session = findOrCreateSession(userId, req);
 
-        // 2. [신규 파일 처리] 이번 요청에 명시적으로 연결된 파일이 있다면 확인 및 검증
+        // 2. 신규 파일 처리 : 이번 요청에 명시적으로 연결된 파일이 있다면 확인 및 검증
         UploadedFile currentFile = null;
         if (req.fileId() != null && req.fileId() != 0) {
             currentFile = uploadedFileRepository.findByIdAndUserAccountId(req.fileId(), userId)
@@ -65,8 +65,7 @@ public class ChatService {
         // 3. 사용자 메시지 저장 (현재 파일이 있다면 메시지에 링크 - 히스토리용)
         saveMessage(session, SenderType.USER, req.query(), currentFile);
 
-        // 4. [자동 RAG 컨텍스트 조회]
-        //    이 세션에서 이전에 사용된 적 있는 모든 '완료된' 파일 조회
+        // 4. [자동 RAG 컨텍스트 조회] : 이 세션에서 이전에 사용된 적 있는 모든 '완료된' 파일 조회
         List<UploadedFile> sessionFiles = messageRepository.findFilesBySessionIdAndStatus(
                 session.getId(), FileStatus.COMPLETED);
 
@@ -75,8 +74,7 @@ public class ChatService {
             sessionFiles.add(currentFile);
         }
 
-        // 5. FastAPI 요청 객체 생성
-        // 파일이 하나라도 있으면 파일명 리스트를 전달, 없으면 null
+        // 5. FastAPI 요청 객체 생성 : 파일이 하나라도 있으면 파일명 리스트를 전달, 없으면 null
         List<String> targetFileNames = sessionFiles.isEmpty() ? null :
             sessionFiles.stream().map(UploadedFile::getOriginalFilename).collect(Collectors.toList());
 
@@ -85,7 +83,7 @@ public class ChatService {
                 String.valueOf(session.getId()),
                 req.query(),
                 N_TURNS,
-                targetFileNames // ★ 핵심: 세션 내 모든 파일명 전달 (자동 RAG)
+                targetFileNames // 세션 내 모든 파일명 전달 (자동 RAG)
         );
 
         // 6. API 경로 결정 (파일 히스토리가 존재하면 무조건 RAG)
@@ -107,10 +105,16 @@ public class ChatService {
     }
 
     private ChatSession findOrCreateSession(Long userId, ChatProxyRequest req) {
-        // 1. 기존 세션 조회
+        // 1. 기존 세션 조회 요청 시
         if (req.sessionId() != null && req.sessionId() != 0) {
-            return sessionRepository.findById(req.sessionId())
+            ChatSession session = sessionRepository.findById(req.sessionId())
                     .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+
+            // 요청한 세션이 본인 맞는지 확인 (IDOR 방지)
+            if (!session.getUserAccount().getId().equals(userId)) {
+                throw new AccessDeniedException("You do not have permission to access this chat session.");
+            }
+            return session;
         }
 
         // 2. 새로운 세션 생성 (파일 연결 로직 완전히 제거 - 순수 대화방)
@@ -148,7 +152,7 @@ public class ChatService {
             .session(session)
             .senderType(sender)
             .content(content)
-            .uploadedFile(file) // ★ 메시지에 파일 연결
+            .uploadedFile(file) // 메시지에 파일 연결
             .build();
         messageRepository.save(message);
     }
@@ -170,7 +174,7 @@ public class ChatService {
             throw new AccessDeniedException("You do not have permission to access this chat session.");
         }
 
-        // ★ 최신순(Desc)으로 페이징 조회
+        // 최신순으로 페이징 조회
         return messageRepository.findAllBySessionIdOrderByCreatedAtDesc(sessionId, pageable)
                 .map(ChatMessageResponse::from);
     }

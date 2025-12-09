@@ -40,48 +40,22 @@ class JpaUserDetailsServiceTest {
                 .build();
         given(users.findByLoginId("testuser")).willReturn(Optional.of(userAccount));
 
-
         // When
         UserDetails userDetails = userDetailsService.loadUserByUsername("testuser");
 
         // Then
         assertThat(userDetails.getUsername()).isEqualTo("testuser");
-
     }
 
-    // 이메일 조회 시나리오 테스트
-    @DisplayName("이메일로 사용자 정보 조회 성공")
+    @DisplayName("이메일로 조회 시 실패 (로그인 ID만 허용)")
     @Test
-    void 이메일로_사용자_조회_성공() {
+    void 이메일로_조회시_실패_예외_발생() {
         // Given
-        var userAccount = UserAccount.builder()
-                .id(1L)
-                .email("test@test.com")
-                .passwordHash("encoded_password")
-                .role(UserRole.USER)
-                .build();
-        // ID 조회는 실패하고, 이메일 조회는 성공하도록 설정
-        given(users.findByLoginId("test@test.com")).willReturn(Optional.empty());
-        given(users.findByEmail("test@test.com")).willReturn(Optional.of(userAccount));
-
-        // When
-        UserDetails userDetails = userDetailsService.loadUserByUsername("test@test.com");
-
-        // Then
-        // 코드 로직에 따라 email로 찾았어도 UserDetails의 username은 email이 됨
-        assertThat(userDetails.getUsername()).isEqualTo("test@test.com");
-        assertThat(userDetails.getPassword()).isEqualTo("encoded_password");
-    }
-
-    @DisplayName("사용자 정보가 없으면 UsernameNotFoundException 발생")
-    @Test
-    void 사용자_없으면_예외_발생() {
-        // Given
-        given(users.findByLoginId("nonexistent")).willReturn(Optional.empty());
-        given(users.findByEmail("nonexistent")).willReturn(Optional.empty());
+        String inputEmail = "test@test.com";
+        given(users.findByLoginId(inputEmail)).willReturn(Optional.empty());
 
         // When & Then
-        assertThatThrownBy(() -> userDetailsService.loadUserByUsername("nonexistent"))
+        assertThatThrownBy(() -> userDetailsService.loadUserByUsername(inputEmail))
                 .isInstanceOf(UsernameNotFoundException.class)
                 .hasMessage("user_not_found");
     }

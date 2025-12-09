@@ -28,29 +28,33 @@ import lombok.RequiredArgsConstructor;
 public class UploadController {
 
     private final S3Service s3;
-    private final FileService fileService; // ★ 변경: Repository 대신 Service 사용
+    private final FileService fileService;
 
     @Operation(summary = "파일 업로드를 위한 Presigned URL 생성", description = "S3에 파일을 직접 업로드할 수 있는 1회용 URL과 DB에 저장될 파일 정보를 생성합니다.")
     @Parameter(name = "filename", description = "업로드할 원본 파일 이름", required = true, example = "lecture.pdf")
     @Parameter(name = "contentType", description = "파일의 MIME 타입", required = true, example = "application/pdf")
     @Parameter(name = "contentLength", description = "파일의 전체 크기 (bytes)", required = true, example = "1048576")
     @PostMapping("/put")
-    // ★ 중요: @Transactional 제거 (S3 네트워크 통신 중 DB 커넥션을 잡고 있지 않기 위함)
     public ResponseEntity<?> presignPut(@RequestParam String filename,
                                         @RequestParam String contentType,
                                         @RequestParam long contentLength,
                                         @AuthenticationPrincipal AuthUser user) {
-        try {
-            Long uid = user != null ? user.getId() : 0L;
+        // [수정] 인증되지 않은 사용자 접근 차단
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
 
-            // 1. S3 Key 생성 및 Presigned URL 발급 (순수 네트워크/로직 작업)
+        try {
+            Long uid = user.getId(); // 0L fallback 제거
+
+            // 1. S3 Key 생성 및 Presigned URL 발급
             String key = s3.buildKey(uid, filename);
             Map<String, Object> res = s3.presignPut(uid, filename, contentType, contentLength, key);
 
-            // 2. DB에 메타데이터 저장 (Service 내부에서 짧게 트랜잭션 처리)
+            // 2. DB에 메타데이터 저장
             UploadedFile savedFile = fileService.createFileMetadata(uid, filename, key);
 
-            // 3. 응답에 fileId 추가 (프론트엔드가 추후 processing 호출 시 사용)
+            // 3. 응답에 fileId 추가
             res.put("fileId", savedFile.getId());
 
             return ResponseEntity.ok(res);

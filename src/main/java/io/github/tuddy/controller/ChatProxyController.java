@@ -22,9 +22,13 @@ import io.github.tuddy.dto.ChatSessionResponse;
 import io.github.tuddy.security.SecurityUtils;
 import io.github.tuddy.service.ChatService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Encoding;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+
+
 
 @Tag(name = "채팅 API", description = "챗봇과의 대화 및 기록 관리 관련 API")
 @RestController
@@ -36,6 +40,9 @@ public class ChatProxyController {
 
     @Operation(summary = "챗봇과 대화", description = "챗봇과 대화 : 이미지 파일을 첨부할 수 있으며, 요청 시 fileId를 포함하면 RAG 기반으로 동작")
     @PostMapping(consumes = { MediaType.MULTIPART_FORM_DATA_VALUE })
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(content = @Content(
+        encoding = @Encoding(name = "req", contentType = "application/json")
+    ))
     public ResponseEntity<ChatProxyResponse> chat(
             @RequestPart("req") @Valid ChatProxyRequest req,
             @RequestPart(value = "files", required = false) List<MultipartFile> files) {

@@ -46,7 +46,7 @@ public class FileService {
         uploadedFileRepository.delete(file);
     }
 
- // S3 URL 발급 시 메타데이터 생성 (트랜잭션 분리를 위해 별도 메서드로 존재 권장)
+    // S3 URL 발급 시 메타데이터 생성 : 트랜잭션 분리
     @Transactional
     public UploadedFile createFileMetadata(Long userId, String filename, String s3Key) {
         UserAccount user = UserAccount.builder().id(userId).build(); // 프록시용

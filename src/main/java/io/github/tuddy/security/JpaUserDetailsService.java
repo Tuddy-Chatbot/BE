@@ -16,14 +16,14 @@ public class JpaUserDetailsService implements UserDetailsService {
 
   @Override
   public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
+    // 이메일 로그인 로직 제거
     var u = users.findByLoginId(username)
-        .or(() -> users.findByEmail(username))
         .orElseThrow(() -> new UsernameNotFoundException("user_not_found"));
 
     var auth = java.util.List.of(new SimpleGrantedAuthority("ROLE_" + u.getRole().name()));
     var pw = u.getPasswordHash() != null ? u.getPasswordHash() : "{noop}";
-    var loginName = u.getLoginId() != null ? u.getLoginId() : u.getEmail();
 
-    return new AuthUser(u.getId(), loginName, pw, auth);
+    // UserDetails의 username 필드에는 명확하게 loginId를 삽입
+    return new AuthUser(u.getId(), u.getLoginId(), pw, auth);
   }
 }

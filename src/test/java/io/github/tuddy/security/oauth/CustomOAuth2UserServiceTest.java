@@ -1,8 +1,7 @@
 package io.github.tuddy.security.oauth;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Map;
@@ -25,6 +24,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import io.github.tuddy.entity.user.AuthProvider;
 import io.github.tuddy.entity.user.UserAccount;
+import io.github.tuddy.entity.user.UserRole;
+import io.github.tuddy.entity.user.UserStatus;
 import io.github.tuddy.repository.UserAccountRepository;
 
 @ExtendWith(MockitoExtension.class)
@@ -32,69 +33,57 @@ class CustomOAuth2UserServiceTest {
 
     private CustomOAuth2UserService customOAuth2UserService;
 
-    @Mock
-    private UserAccountRepository users;
+    @Mock private UserAccountRepository users;
+    @Mock private DefaultOAuth2UserService mockDelegate;
 
-    @Mock
-    private DefaultOAuth2UserService mockDelegate;
+    private ClientRegistration naverClient;
+    private OAuth2UserRequest mockUserRequest;
 
     @BeforeEach
     void setUp() {
-        // @InjectMocks 대신 수동으로 객체 생성 및 Mock 주입
         customOAuth2UserService = new CustomOAuth2UserService(users);
         ReflectionTestUtils.setField(customOAuth2UserService, "delegate", mockDelegate);
-    }
 
-    @DisplayName("신규 소셜 로그인 사용자 생성")
-    @Test
-    void 신규_소셜로그인_사용자_생성() {
-        // Given
-        ClientRegistration clientRegistration = ClientRegistration.withRegistrationId("naver")
+        naverClient = ClientRegistration.withRegistrationId("naver")
                 .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
                 .clientId("id").redirectUri("uri").authorizationUri("uri").tokenUri("uri").userInfoUri("uri")
                 .userNameAttributeName("response").build();
         OAuth2AccessToken accessToken = new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER, "token", null, null);
-        var userRequest = new OAuth2UserRequest(clientRegistration, accessToken);
-
-        Map<String, Object> attributes = Map.of("response",
-                Map.of("id", "12345", "email", "test@naver.com", "name", "네이버유저"));
-        OAuth2User oAuth2User = new DefaultOAuth2User(null, attributes, "response");
-
-        // Mock Delegate 설정: delegate.loadUser가 호출되면 준비된 oAuth2User를 반환하도록 설정
-        when(mockDelegate.loadUser(userRequest)).thenReturn(oAuth2User);
-
-        // DB에 없는 사용자라고 가정
-        when(users.findByProviderAndProviderUserId(AuthProvider.NAVER, "12345"))
-                .thenReturn(Optional.empty());
-
-        // When
-        // 올바른 시그니처로 메서드 호출
-        customOAuth2UserService.loadUser(userRequest);
-
-        // Then
-        verify(users).save(any(UserAccount.class)); // save 메서드가 호출되었는지 검증
+        mockUserRequest = new OAuth2UserRequest(naverClient, accessToken);
     }
 
-    @DisplayName("기존 소셜 로그인 사용자")
+    @DisplayName("기존 소셜 로그인 사용자 재로그인 시 정보 업데이트 및 db_id 확인")
     @Test
-    void 기존_소셜로그인_사용자() {
+    void 기존_사용자_업데이트_및_PK반환() {
         // Given
-        ClientRegistration clientRegistration = ClientRegistration.withRegistrationId("naver").authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE).clientId("id").redirectUri("uri").authorizationUri("uri").tokenUri("uri").userInfoUri("uri").userNameAttributeName("response").build();
-        OAuth2AccessToken accessToken = new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER, "token", null, null);
-        var userRequest = new OAuth2UserRequest(clientRegistration, accessToken);
-        Map<String, Object> attributes = Map.of("response", Map.of("id", "12345", "email", "test@naver.com", "name", "네이버유저"));
-        OAuth2User oAuth2User = new DefaultOAuth2User(null, attributes, "response");
+        Map<String, Object> newAttributes = Map.of("response",
+                Map.of("id", "12345", "email", "new@naver.com", "name", "new_name"));
+        OAuth2User oAuth2User = new DefaultOAuth2User(null, newAttributes, "response");
 
-        when(mockDelegate.loadUser(userRequest)).thenReturn(oAuth2User);
+        when(mockDelegate.loadUser(mockUserRequest)).thenReturn(oAuth2User);
 
-        // 이미 DB에 존재하는 사용자라고 가정
+        UserAccount existingUser = UserAccount.builder()
+                .id(100L) // 예상 DB ID
+                .provider(AuthProvider.NAVER)
+                .providerUserId("12345")
+                .email("old@naver.com")
+                .displayName("old_name")
+                .role(UserRole.USER)
+                .status(UserStatus.ACTIVE)
+                .build();
         when(users.findByProviderAndProviderUserId(AuthProvider.NAVER, "12345"))
-                .thenReturn(Optional.of(UserAccount.builder().build()));
+                .thenReturn(Optional.of(existingUser));
+        when(users.save(any(UserAccount.class))).thenReturn(existingUser); // 업데이트 후 리턴 가정
 
         // When
-        customOAuth2UserService.loadUser(userRequest);
+        OAuth2User result = customOAuth2UserService.loadUser(mockUserRequest);
 
         // Then
-        verify(users, never()).save(any(UserAccount.class)); // 기존 사용자는 save를 호출하지 않음
+        // 1. 정보 업데이트 검증
+        assertThat(existingUser.getEmail()).isEqualTo("new@naver.com");
+
+        // 2. [중요] db_id가 attributes에 포함되었는지 검증
+        assertThat(result.getAttributes()).containsKey("db_id");
+        assertThat(result.getAttributes().get("db_id")).isEqualTo(100L);
     }
 }
