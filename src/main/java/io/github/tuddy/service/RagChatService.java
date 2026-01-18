@@ -10,7 +10,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.multipart.MultipartFile;
 
 import io.github.tuddy.dto.FastApiChatRequest;
@@ -21,7 +20,6 @@ import lombok.extern.slf4j.Slf4j;
 public class RagChatService {
 
     private final RestClient client;
-
     private final String chatPath;
     private final String normalPath;
     private final String ocrPath;
@@ -39,7 +37,39 @@ public class RagChatService {
     public String getChatPath() { return this.chatPath; }
     public String getNormalPath() { return this.normalPath; }
 
+    // Multipart 채팅 요청 (ChatService 사용)
+    public String relayChatWithImages(String path, FastApiChatRequest req, List<MultipartFile> files) {
+        try {
+            MultipartBodyBuilder builder = new MultipartBodyBuilder();
 
+            // Python 규격(snake_case)에 맞춰 파라미터 전송
+            builder.part("user_id", req.userId());
+            builder.part("query", req.query());
+            builder.part("n_turns", String.valueOf(req.nTurns()));
+
+            if (req.sessionId() != null) {
+                builder.part("session_id", req.sessionId());
+            }
+
+            if (files != null && !files.isEmpty()) {
+                for (MultipartFile file : files) {
+                    builder.part("files", file.getResource());
+                }
+            }
+
+            return client.post().uri(path)
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(builder.build())
+                    .retrieve()
+                    .body(String.class);
+
+        } catch (Exception e) {
+            log.error("AI Chat Error", e);
+            return "{\"response\": \"AI 서버 오류: " + e.getMessage() + "\"}";
+        }
+    }
+
+    // OCR 요청 (FileService 사용)
     public void sendOcrRequest(String userId, String fileKey) {
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("user_id", userId);
@@ -51,76 +81,17 @@ public class RagChatService {
                     .body(body)
                     .retrieve()
                     .toBodilessEntity();
-            log.info("OCR request sent for file: {}", fileKey);
-        } catch (RestClientResponseException e) {
-            log.error("OCR Request Failed", e);
-            throw new RuntimeException("FastAPI OCR Request Failed: " + e.getResponseBodyAsString());
+        } catch (Exception e) {
+            throw new RuntimeException("OCR Request Failed", e);
         }
     }
 
-
+    // [Restored] Legacy 메서드들
     public String relayRag(FastApiChatRequest request) {
-        try {
-            return client.post().uri(chatPath)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(request)
-                    .retrieve()
-                    .body(String.class);
-        } catch (RestClientResponseException e) {
-            log.error("Relay RAG Failed", e);
-            return e.getResponseBodyAsString();
-        }
+        return client.post().uri(chatPath).contentType(MediaType.APPLICATION_JSON).body(request).retrieve().body(String.class);
     }
-
 
     public String relayNormal(FastApiChatRequest request) {
-        try {
-            return client.post().uri(normalPath)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(request)
-                    .retrieve()
-                    .body(String.class);
-        } catch (RestClientResponseException e) {
-            log.error("Relay Normal Failed", e);
-            return e.getResponseBodyAsString();
-        }
-    }
-
-    public String relayChatWithImages(String path, FastApiChatRequest req, List<MultipartFile> files) {
-        try {
-            MultipartBodyBuilder builder = new MultipartBodyBuilder();
-
-            // [핵심] Python 파라미터 이름(snake_case)으로 매핑
-            // DTO가 Record이므로 getter 대신 메서드 호출 (req.userId())
-            builder.part("user_id", req.userId());
-            builder.part("query", req.query());
-            builder.part("n_turns", String.valueOf(req.nTurns()));
-
-            if (req.sessionId() != null) {
-                builder.part("session_id", req.sessionId());
-            }
-
-            // 파일 추가
-            if (files != null && !files.isEmpty()) {
-                for (MultipartFile file : files) {
-                    builder.part("files", file.getResource());
-                }
-            }
-
-            return client.post()
-                    .uri(path)
-                    .contentType(MediaType.MULTIPART_FORM_DATA)
-                    .body(builder.build())
-                    .retrieve()
-                    .body(String.class);
-
-        } catch (RestClientResponseException e) {
-            log.error("AI Server Error: {}", e.getMessage(), e);
-            // 프론트엔드 크래시 방지를 위한 JSON 에러 반환
-            return "{\"response\": \"AI 서버 오류: " + e.getResponseBodyAsString() + "\"}";
-        } catch (Exception e) {
-            log.error("General Error", e);
-            return "{\"response\": \"내부 서버 오류: " + e.getMessage() + "\"}";
-        }
+        return client.post().uri(normalPath).contentType(MediaType.APPLICATION_JSON).body(request).retrieve().body(String.class);
     }
 }

@@ -23,21 +23,21 @@ public class FileService {
 
     private final UploadedFileRepository uploadedFileRepository;
     private final S3Service s3Service;
-    private final RagChatService ragChatService; // AI 서버 통신용
+    private final RagChatService ragChatService; // AI 연결용
 
     /**
-     * 채팅용 파일 처리 (S3 저장 + DB 저장 + AI 인덱싱 요청)
+     * 채팅용 파일 처리 (S3 업로드 -> DB 저장 -> AI 인덱싱 요청)
      */
     @Transactional
     public UploadedFileResponse uploadFile(MultipartFile file, Long userId) {
         if (file.isEmpty()) {
-            throw new IllegalArgumentException("Cannot upload empty file");
-        }
+			throw new IllegalArgumentException("Cannot upload empty file");
+		}
 
         // 1. S3 업로드
         String s3Key = s3Service.upload(file);
 
-        // 2. DB 저장 (초기 상태: PROCESSING)
+        // 2. DB 저장
         UploadedFile uploadedFile = UploadedFile.builder()
                 .userAccount(UserAccount.builder().id(userId).build())
                 .originalFilename(file.getOriginalFilename())
@@ -47,20 +47,18 @@ public class FileService {
 
         UploadedFile savedFile = uploadedFileRepository.save(uploadedFile);
 
-        // 3. AI 서버에 OCR 및 벡터 DB 저장 요청
-        // (이게 있어야 나중에 RAG로 검색이 됩니다)
+        // 3. AI 서버에 인덱싱(OCR) 요청
         try {
             ragChatService.sendOcrRequest(String.valueOf(userId), s3Key);
 
-            // 성공 시 상태 완료로 변경
+            // 성공 시 상태 완료
             savedFile.setStatus(FileStatus.COMPLETED);
             uploadedFileRepository.save(savedFile);
-            log.info("File processed and indexed successfully: {}", s3Key);
+            log.info("File indexed successfully: {}", s3Key);
 
         } catch (Exception e) {
-            log.error("Failed to index file in AI server: {}", s3Key, e);
-            // AI 쪽 인덱싱이 실패했더라도, 현재 채팅 턴에서는 파일을 직접 보내므로
-            // 우선 COMPLETED로 처리하여 대화가 끊기지 않도록 함 ( 추후 논의 : FAILED로 변경 여부)
+            log.error("AI Indexing failed: {}", s3Key, e);
+            // 인덱싱 실패해도 일단 채팅은 진행되도록 COMPLETED 처리 : 추후 변경 논의
             savedFile.setStatus(FileStatus.COMPLETED);
             uploadedFileRepository.save(savedFile);
         }
@@ -68,9 +66,6 @@ public class FileService {
         return UploadedFileResponse.from(savedFile);
     }
 
-    /**
-     * 메타데이터 생성 (UploadController용)
-     */
     @Transactional
     public UploadedFile createFileMetadata(Long userId, String filename, String s3Key) {
         UploadedFile file = UploadedFile.builder()
@@ -82,9 +77,6 @@ public class FileService {
         return uploadedFileRepository.save(file);
     }
 
-    /**
-     * 업로드 후처리 (FileController용) : Presigned URL로 올린 파일도 여기서 AI 인덱싱을 요청
-     */
     @Transactional
     public void processUploadedFile(Long userId, Long fileId) {
         UploadedFile file = uploadedFileRepository.findByIdAndUserAccountId(fileId, userId)
@@ -105,16 +97,13 @@ public class FileService {
     @Transactional(readOnly = true)
     public List<UploadedFileResponse> getMyFiles(Long userId) {
         return uploadedFileRepository.findAllByUserAccountIdOrderByCreatedAtDesc(userId)
-                .stream()
-                .map(UploadedFileResponse::from)
-                .collect(Collectors.toList());
+                .stream().map(UploadedFileResponse::from).collect(Collectors.toList());
     }
 
     @Transactional
     public void deleteFile(Long userId, Long fileId) {
         UploadedFile file = uploadedFileRepository.findByIdAndUserAccountId(fileId, userId)
                 .orElseThrow(() -> new AccessDeniedException("File not found"));
-
         s3Service.deleteFile(file.getS3Key());
         uploadedFileRepository.delete(file);
     }

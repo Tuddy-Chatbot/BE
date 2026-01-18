@@ -45,23 +45,23 @@ public class ChatService {
     private final ChatMessageRepository messageRepository;
     private final UploadedFileRepository uploadedFileRepository;
     private final ObjectMapper objectMapper;
-    private final TransactionTemplate transactionTemplate;
+    private final TransactionTemplate transactionTemplate; // 트랜잭션 제어
 
     private static final int N_TURNS = 7;
 
     public ChatProxyResponse processChat(Long userId, ChatProxyRequest req, List<MultipartFile> files) {
 
-        // 1. 세션 조회/생성 (트랜잭션)
+        // 1. [트랜잭션] 세션 조회/생성
         ChatSession session = transactionTemplate.execute(status -> findOrCreateSession(userId, req));
 
         UploadedFile currentFile = null;
 
-        // 2. 파일 업로드 (트랜잭션 내부 처리됨)
+        // 2. [파일 업로드] (내부적으로 트랜잭션 처리됨)
         if (files != null && !files.isEmpty()) {
             MultipartFile file = files.get(0);
+            // 여기서 S3 업로드 + DB 저장 + AI 인덱싱 요청이 모두 수행됩니다.
             UploadedFileResponse uploadedDto = fileService.uploadFile(file, userId);
 
-            // DTO -> Entity (트랜잭션 필요 없음)
             currentFile = uploadedFileRepository.findById(uploadedDto.id())
                     .orElseThrow(() -> new IllegalStateException("File saved but not found"));
 
@@ -70,13 +70,13 @@ public class ChatService {
                     .orElseThrow(() -> new AccessDeniedException("File not found"));
         }
 
-        // 3. 사용자 메시지 저장 (트랜잭션)
+        // 3. [트랜잭션] 사용자 메시지 저장
         final UploadedFile fileForSave = currentFile;
         transactionTemplate.executeWithoutResult(status ->
             saveMessage(session, SenderType.USER, req.query(), fileForSave)
         );
 
-        // 4. RAG 컨텍스트 준비
+        // 4. RAG 컨텍스트 확인 (과거 파일 존재 여부)
         List<UploadedFile> sessionFiles = messageRepository.findFilesBySessionIdAndStatus(
                 session.getId(), FileStatus.COMPLETED);
 
@@ -84,7 +84,7 @@ public class ChatService {
             sessionFiles.add(currentFile);
         }
 
-        // 5. AI 요청 준비
+        // 5. AI 요청 객체 생성
         var fastApiReq = new FastApiChatRequest(
                 String.valueOf(userId),
                 String.valueOf(session.getId()),
@@ -92,13 +92,13 @@ public class ChatService {
                 N_TURNS
         );
 
-        // 6. AI 호출 (트랜잭션 없음 -> 커넥션 점유 안 함)
+        // 6. [외부 통신] AI 호출 (트랜잭션 없이 실행 -> 안전함)
         String apiPath = !sessionFiles.isEmpty() ? ragChatService.getChatPath() : ragChatService.getNormalPath();
         String botAnswerJson = ragChatService.relayChatWithImages(apiPath, fastApiReq, files);
 
         String botAnswerText = parseAnswer(botAnswerJson);
 
-        // 7. 봇 응답 저장 (트랜잭션)
+        // 7. [트랜잭션] 봇 응답 저장
         transactionTemplate.executeWithoutResult(status ->
             saveMessage(session, SenderType.BOT, botAnswerText, null)
         );
@@ -106,7 +106,6 @@ public class ChatService {
         return new ChatProxyResponse(session.getId(), botAnswerText);
     }
 
-    // Helper 메서드들은 private으로 변경
     private ChatSession findOrCreateSession(Long userId, ChatProxyRequest req) {
         if (req.sessionId() != null && req.sessionId() != 0) {
             return sessionRepository.findById(req.sessionId())
@@ -117,19 +116,12 @@ public class ChatService {
         String title = (req.query() != null && req.query().length() > 20)
                      ? req.query().substring(0, 20) : (req.query() == null ? "New Chat" : req.query());
 
-        return sessionRepository.save(ChatSession.builder()
-                .userAccount(user)
-                .title(title)
-                .build());
+        return sessionRepository.save(ChatSession.builder().userAccount(user).title(title).build());
     }
 
     private void saveMessage(ChatSession session, SenderType sender, String content, UploadedFile file) {
         messageRepository.save(ChatMessage.builder()
-                .session(session)
-                .senderType(sender)
-                .content(content)
-                .uploadedFile(file)
-                .build());
+                .session(session).senderType(sender).content(content).uploadedFile(file).build());
     }
 
     private String parseAnswer(String jsonResponse) {
@@ -145,7 +137,7 @@ public class ChatService {
         }
     }
 
-    // 조회 로직들은 그대로 유지
+    // 조회 로직 유지
     public List<ChatSessionResponse> getMyChatSessions(Long userId) {
         return sessionRepository.findAllByUserAccountIdOrderByCreatedAtDesc(userId)
                 .stream().map(ChatSessionResponse::from).collect(Collectors.toList());

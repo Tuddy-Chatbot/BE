@@ -26,15 +26,15 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
 @RequiredArgsConstructor
 public class S3Service {
 
-    private final S3Client s3Client;       // 직접 업로드용
-    private final S3Presigner s3Presigner; // URL 발급용
+    private final S3Client s3Client;
+    private final S3Presigner s3Presigner;
 
     @Value("${app.aws.s3.bucket}")
     private String bucket;
 
     /**
-     * 서버 직접 업로드 (ChatService 흐름용)
-     * 파일을 S3 'chat-files/' 경로에 저장하고 Key를 반환
+     * 서버 직접 업로드 (ChatService용)
+     * 파일을 'chat-files/' 경로에 저장
      */
     public String upload(MultipartFile file) {
         String originalFilename = file.getOriginalFilename();
@@ -42,7 +42,7 @@ public class S3Service {
 			originalFilename = "unknown";
 		}
 
-        // 경로 관리: chat-files/UUID_파일명
+        // 경로 구분 및 충돌 방지
         String s3Key = "chat-files/" + UUID.randomUUID() + "_" + originalFilename;
 
         try {
@@ -63,20 +63,19 @@ public class S3Service {
 
     /**
      * Presigned URL Key 생성 (UploadController용)
-     * 기존 로직 유지: raw/{userId}/{uuid}_{filename}
      */
     public String buildKey(Long userId, String filename) {
         return "raw/" + userId + "/" + UUID.randomUUID() + "_" + filename;
     }
 
     /**
-     * 업로드용 URL 발급 (UploadController용)
+     * 업로드용 URL 발급
      */
     public Map<String, Object> presignPut(Long userId, String filename, String contentType, long contentLength, String key) {
-        long limit = 100 * 1024 * 1024; // 100MB 제한
+        long limit = 100 * 1024 * 1024; // 100MB
         if (contentLength > limit) {
-             throw new IllegalArgumentException("SIZE_LIMIT_EXCEEDED");
-        }
+			throw new IllegalArgumentException("SIZE_LIMIT_EXCEEDED");
+		}
 
         PutObjectRequest objectRequest = PutObjectRequest.builder()
                 .bucket(bucket)
@@ -86,7 +85,7 @@ public class S3Service {
                 .build();
 
         PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
-                .signatureDuration(Duration.ofMinutes(15)) // app.s3.presign.ttl=PT15M 반영
+                .signatureDuration(Duration.ofMinutes(15))
                 .putObjectRequest(objectRequest)
                 .build();
 
@@ -99,7 +98,7 @@ public class S3Service {
     }
 
     /**
-     * 다운로드용 URL 발급 (UploadController용)
+     * 다운로드용 URL 발급
      */
     public String presignGet(String key) {
         GetObjectRequest objectRequest = GetObjectRequest.builder()
@@ -115,7 +114,6 @@ public class S3Service {
         return s3Presigner.presignGetObject(presignRequest).url().toString();
     }
 
-    // 파일 삭제
     public void deleteFile(String s3Key) {
         if (s3Key == null || s3Key.isBlank()) {
 			return;
