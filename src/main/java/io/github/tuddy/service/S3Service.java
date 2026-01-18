@@ -29,10 +29,10 @@ public class S3Service {
     private final S3Client s3Client;       // 직접 업로드용
     private final S3Presigner s3Presigner; // URL 생성용
 
-    @Value("${spring.cloud.aws.s3.bucket}")
+    @Value("${app.aws.s3.bucket}")
     private String bucket;
 
-    // [New] 서버 직접 업로드 (ChatService용)
+    // 서버 직접 업로드 (ChatService용)
     public String upload(MultipartFile file) {
         String originalFilename = file.getOriginalFilename();
         String extension = "";
@@ -57,12 +57,10 @@ public class S3Service {
         }
     }
 
-    // [Legacy] Presigned URL Key 생성 (UploadController용) - 복구됨
     public String buildKey(Long userId, String filename) {
         return "raw/" + userId + "/" + UUID.randomUUID() + "_" + filename;
     }
 
-    // [Legacy] PUT URL 생성 (UploadController용) - 복구됨
     public Map<String, Object> presignPut(Long userId, String filename, String contentType, long contentLength, String key) {
         long limit = 100 * 1024 * 1024; // 100MB
         if (contentLength > limit) {
@@ -89,7 +87,6 @@ public class S3Service {
         return res;
     }
 
-    // [Legacy] GET URL 생성 (UploadController용) - 복구됨
     public String presignGet(String key) {
         GetObjectRequest objectRequest = GetObjectRequest.builder()
                 .bucket(bucket)

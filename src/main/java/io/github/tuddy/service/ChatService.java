@@ -7,7 +7,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -39,35 +39,29 @@ import lombok.extern.slf4j.Slf4j;
 public class ChatService {
 
     private final RagChatService ragChatService;
-    private final FileService fileService; // Step 2에서 수정한 서비스 주입
+    private final FileService fileService;
     private final UserAccountRepository userAccountRepository;
     private final ChatSessionRepository sessionRepository;
     private final ChatMessageRepository messageRepository;
     private final UploadedFileRepository uploadedFileRepository;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactionTemplate;
 
     private static final int N_TURNS = 7;
 
-    /**
-     * 메인 채팅 처리 로직
-     * 주의: 전체 @Transactional을 걸지 않습니다. (DB 커넥션 점유 방지)
-     * 필요한 구간(save 등)은 Repository가 트랜잭션을 처리하거나 내부 메서드에서 처리합니다.
-     */
     public ChatProxyResponse processChat(Long userId, ChatProxyRequest req, List<MultipartFile> files) {
 
         // 1. 세션 조회/생성 (트랜잭션)
-        ChatSession session = findOrCreateSession(userId, req);
+        ChatSession session = transactionTemplate.execute(status -> findOrCreateSession(userId, req));
 
         UploadedFile currentFile = null;
 
-        // 2. 파일 저장 (S3 + DB)
-        // 이 부분은 FileService.uploadFile 내부에서 별도 트랜잭션으로 처리됨
+        // 2. 파일 업로드 (트랜잭션 내부 처리됨)
         if (files != null && !files.isEmpty()) {
-            // 첫 번째 파일만 처리
             MultipartFile file = files.get(0);
             UploadedFileResponse uploadedDto = fileService.uploadFile(file, userId);
 
-            // DTO -> Entity 변환 (또는 재조회)
+            // DTO -> Entity (트랜잭션 필요 없음)
             currentFile = uploadedFileRepository.findById(uploadedDto.id())
                     .orElseThrow(() -> new IllegalStateException("File saved but not found"));
 
@@ -77,13 +71,15 @@ public class ChatService {
         }
 
         // 3. 사용자 메시지 저장 (트랜잭션)
-        saveMessage(session, SenderType.USER, req.query(), currentFile);
+        final UploadedFile fileForSave = currentFile;
+        transactionTemplate.executeWithoutResult(status ->
+            saveMessage(session, SenderType.USER, req.query(), fileForSave)
+        );
 
-        // 4. RAG 컨텍스트 파일 확인 (단순 조회)
+        // 4. RAG 컨텍스트 준비
         List<UploadedFile> sessionFiles = messageRepository.findFilesBySessionIdAndStatus(
                 session.getId(), FileStatus.COMPLETED);
 
-        // 방금 올린 파일 포함 여부 체크
         if (currentFile != null && !sessionFiles.contains(currentFile)) {
             sessionFiles.add(currentFile);
         }
@@ -96,20 +92,22 @@ public class ChatService {
                 N_TURNS
         );
 
-        // 6. 모드 결정 및 AI 호출 (No Transaction, Blocking I/O)
+        // 6. AI 호출 (트랜잭션 없음 -> 커넥션 점유 안 함)
         String apiPath = !sessionFiles.isEmpty() ? ragChatService.getChatPath() : ragChatService.getNormalPath();
         String botAnswerJson = ragChatService.relayChatWithImages(apiPath, fastApiReq, files);
 
-        // 7. 봇 응답 저장 (트랜잭션)
         String botAnswerText = parseAnswer(botAnswerJson);
-        saveMessage(session, SenderType.BOT, botAnswerText, null);
+
+        // 7. 봇 응답 저장 (트랜잭션)
+        transactionTemplate.executeWithoutResult(status ->
+            saveMessage(session, SenderType.BOT, botAnswerText, null)
+        );
 
         return new ChatProxyResponse(session.getId(), botAnswerText);
     }
 
-    // Helper: 세션 생성/조회 (트랜잭션 필요)
-    @Transactional
-    protected ChatSession findOrCreateSession(Long userId, ChatProxyRequest req) {
+    // Helper 메서드들은 private으로 변경
+    private ChatSession findOrCreateSession(Long userId, ChatProxyRequest req) {
         if (req.sessionId() != null && req.sessionId() != 0) {
             return sessionRepository.findById(req.sessionId())
                     .filter(s -> s.getUserAccount().getId().equals(userId))
@@ -125,9 +123,7 @@ public class ChatService {
                 .build());
     }
 
-    // Helper: 메시지 저장 (트랜잭션 필요)
-    @Transactional
-    protected void saveMessage(ChatSession session, SenderType sender, String content, UploadedFile file) {
+    private void saveMessage(ChatSession session, SenderType sender, String content, UploadedFile file) {
         messageRepository.save(ChatMessage.builder()
                 .session(session)
                 .senderType(sender)
@@ -142,21 +138,19 @@ public class ChatService {
 		}
         try {
             FastApiResponse res = objectMapper.readValue(jsonResponse, FastApiResponse.class);
-            return res.response() != null ? res.response() : "응답 없음";
+            return res.response() != null ? res.response() : "생성 실패";
         } catch (JsonProcessingException e) {
             log.error("JSON Error", e);
             return "오류 발생";
         }
     }
 
-    // 조회 로직들은 기존 유지...
-    @Transactional(readOnly = true)
+    // 조회 로직들은 그대로 유지
     public List<ChatSessionResponse> getMyChatSessions(Long userId) {
         return sessionRepository.findAllByUserAccountIdOrderByCreatedAtDesc(userId)
                 .stream().map(ChatSessionResponse::from).collect(Collectors.toList());
     }
 
-    @Transactional(readOnly = true)
     public Slice<ChatMessageResponse> getMessagesBySession(Long userId, Long sessionId, Pageable pageable) {
         return messageRepository.findAllBySessionIdOrderByCreatedAtDesc(sessionId, pageable)
                 .map(ChatMessageResponse::from);

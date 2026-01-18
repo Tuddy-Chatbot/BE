@@ -25,9 +25,8 @@ public class FileService {
     private final S3Service s3Service;
     private final RagChatService ragChatService;
 
-    /**
-     * [New] 서버 직접 업로드 방식 (ChatService에서 사용)
-     */
+
+    // 수정 : 서버 직접 업로드 방식 (ChatService에서 사용)
     @Transactional
     public UploadedFileResponse uploadFile(MultipartFile file, Long userId) {
         if (file.isEmpty()) {
@@ -64,10 +63,7 @@ public class FileService {
         return uploadedFileRepository.save(file);
     }
 
-    /**
-     * [Legacy] 업로드 완료 후 후처리 (FileController에서 사용)
-     * - processUploadedFile 메서드 복구
-     */
+
     @Transactional
     public void processUploadedFile(Long userId, Long fileId) {
         UploadedFile file = uploadedFileRepository.findByIdAndUserAccountId(fileId, userId)
