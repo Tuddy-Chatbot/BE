@@ -1,124 +1,127 @@
 package io.github.tuddy.service;
 
+import java.io.IOException;
 import java.time.Duration;
-import java.time.LocalDate;
-import java.util.Arrays;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
-import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
-import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class S3Service {
 
-    private final S3Client s3;
-    private final S3Presigner presigner;
+    private final S3Client s3Client;
+    private final S3Presigner s3Presigner;
 
-    @Value("${app.aws.s3.bucket}") private String bucket;
-    @Value("${app.s3.prefix:incoming}") private String prefix;
-    @Value("${app.s3.presign.ttl:PT15M}") private Duration ttl;
-    @Value("${app.s3.allowed-types:}") private String allowedTypesCsv;
-    @Value("${app.s3.max-size-bytes:0}") private long maxSize;
+    @Value("${app.aws.s3.bucket}")
+    private String bucket;
 
-    private Set<String> allowedTypes;
+    /**
+     * 서버 직접 업로드 (ChatService용)
+     * 파일을 'chat-files/' 경로에 저장
+     */
+    public String upload(MultipartFile file) {
+        String originalFilename = file.getOriginalFilename();
+        if (originalFilename == null) {
+			originalFilename = "unknown";
+		}
 
-    @PostConstruct
-    void init() {
-        allowedTypes = Arrays.stream(allowedTypesCsv.split(","))
-                .map(String::trim).filter(s -> !s.isEmpty())
-                .collect(Collectors.toSet());
-    }
+        // 경로 구분 및 충돌 방지
+        String s3Key = "chat-files/" + UUID.randomUUID() + "_" + originalFilename;
 
-    public String buildKey(Long userId, String filename) {
-        String safe = sanitize(filename);
-        LocalDate d = LocalDate.now();
-        return "%s/%d/%04d/%02d/%02d/%s-%s".formatted(
-                prefix, userId == null ? 0 : userId,
-                d.getYear(), d.getMonthValue(), d.getDayOfMonth(),
-                UUID.randomUUID(), safe);
-    }
+        try {
+            PutObjectRequest putOb = PutObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(s3Key)
+                    .contentType(file.getContentType())
+                    .build();
 
-    // ★★★ 1. 메서드 시그니처에 String key를 추가합니다. ★★★
-    public Map<String, Object> presignPut(Long userId, String filename, String contentType, long contentLength, String key) {
-        assertAllowed(contentType);
-        if (maxSize > 0 && contentLength > maxSize) {
-            throw new IllegalArgumentException("SIZE_LIMIT: max=" + maxSize + ", got=" + contentLength);
+            s3Client.putObject(putOb, RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
+            log.info("S3 Direct Upload Success: {}", s3Key);
+            return s3Key;
+
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to upload file to S3", e);
         }
-
-        var putReq = PutObjectRequest.builder()
-                .bucket(bucket)
-                .key(key) // 전달받은 key를 사용합니다.
-                .contentType(contentType)
-                .serverSideEncryption("AES256")
-                .build();
-
-        var presignReq = PutObjectPresignRequest.builder()
-                .signatureDuration(ttl)
-                .putObjectRequest(putReq)
-                .build();
-
-        PresignedPutObjectRequest signed = presigner.presignPutObject(presignReq);
-
-        Map<String, Object> resp = new LinkedHashMap<>();
-        resp.put("bucket", bucket);
-        resp.put("key", key);
-        resp.put("url", signed.url().toString());
-        resp.put("headers", signed.signedHeaders());
-        resp.put("expiresAt", signed.expiration().toString());
-        return resp;
     }
 
+    /**
+     * Presigned URL Key 생성 (UploadController용)
+     */
+    public String buildKey(Long userId, String filename) {
+        return "raw/" + userId + "/" + UUID.randomUUID() + "_" + filename;
+    }
+
+    /**
+     * 업로드용 URL 발급
+     */
+    public Map<String, Object> presignPut(Long userId, String filename, String contentType, long contentLength, String key) {
+        long limit = 100 * 1024 * 1024; // 100MB
+        if (contentLength > limit) {
+			throw new IllegalArgumentException("SIZE_LIMIT_EXCEEDED");
+		}
+
+        PutObjectRequest objectRequest = PutObjectRequest.builder()
+                .bucket(bucket)
+                .key(key)
+                .contentType(contentType)
+                .contentLength(contentLength)
+                .build();
+
+        PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
+                .signatureDuration(Duration.ofMinutes(15))
+                .putObjectRequest(objectRequest)
+                .build();
+
+        String url = s3Presigner.presignPutObject(presignRequest).url().toString();
+
+        Map<String, Object> res = new HashMap<>();
+        res.put("url", url);
+        res.put("key", key);
+        return res;
+    }
+
+    /**
+     * 다운로드용 URL 발급
+     */
     public String presignGet(String key) {
-        GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+        GetObjectRequest objectRequest = GetObjectRequest.builder()
                 .bucket(bucket)
                 .key(key)
                 .build();
 
         GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
-                .signatureDuration(ttl)
-                .getObjectRequest(getObjectRequest)
+                .signatureDuration(Duration.ofMinutes(15))
+                .getObjectRequest(objectRequest)
                 .build();
 
-        PresignedGetObjectRequest presignedGetObjectRequest = presigner.presignGetObject(presignRequest);
-
-        return presignedGetObjectRequest.url().toString();
+        return s3Presigner.presignGetObject(presignRequest).url().toString();
     }
 
-    public void deleteFile(String key) {
-        DeleteObjectRequest deleteObjectRequest = DeleteObjectRequest.builder()
-                .bucket(bucket)
-                .key(key)
-                .build();
-        s3.deleteObject(deleteObjectRequest);
-    }
-
-    private void assertAllowed(String contentType) {
-        if (!allowedTypes.isEmpty() && !allowedTypes.contains(contentType)) {
-            throw new IllegalArgumentException("Unsupported content-type: " + contentType);
+    public void deleteFile(String s3Key) {
+        if (s3Key == null || s3Key.isBlank()) {
+			return;
+		}
+        try {
+            s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(s3Key).build());
+        } catch (Exception e) {
+            log.error("Failed to delete file from S3: {}", s3Key, e);
         }
-    }
-
-    private static String sanitize(String name) {
-        if (name == null) {
-            return "unknown";
-        }
-        return name.replaceAll("[\\\\/:*?\"<>|]", "_");
     }
 }

@@ -10,13 +10,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.multipart.MultipartFile;
 
 import io.github.tuddy.dto.FastApiChatRequest;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @Service
 public class RagChatService {
+
     private final RestClient client;
     private final String chatPath;
     private final String normalPath;
@@ -32,6 +34,42 @@ public class RagChatService {
         this.ocrPath = ocrPath;
     }
 
+    public String getChatPath() { return this.chatPath; }
+    public String getNormalPath() { return this.normalPath; }
+
+    // Multipart 채팅 요청 (ChatService 사용)
+    public String relayChatWithImages(String path, FastApiChatRequest req, List<MultipartFile> files) {
+        try {
+            MultipartBodyBuilder builder = new MultipartBodyBuilder();
+
+            // Python 규격(snake_case)에 맞춰 파라미터 전송
+            builder.part("user_id", req.userId());
+            builder.part("query", req.query());
+            builder.part("n_turns", String.valueOf(req.nTurns()));
+
+            if (req.sessionId() != null) {
+                builder.part("session_id", req.sessionId());
+            }
+
+            if (files != null && !files.isEmpty()) {
+                for (MultipartFile file : files) {
+                    builder.part("files", file.getResource());
+                }
+            }
+
+            return client.post().uri(path)
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(builder.build())
+                    .retrieve()
+                    .body(String.class);
+
+        } catch (Exception e) {
+            log.error("AI Chat Error", e);
+            return "{\"response\": \"AI 서버 오류: " + e.getMessage() + "\"}";
+        }
+    }
+
+    // OCR 요청 (FileService 사용)
     public void sendOcrRequest(String userId, String fileKey) {
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("user_id", userId);
@@ -43,75 +81,17 @@ public class RagChatService {
                     .body(body)
                     .retrieve()
                     .toBodilessEntity();
-        } catch (RestClientResponseException e) {
-            throw new RuntimeException("FastAPI OCR Request Failed: " + e.getResponseBodyAsString());
+        } catch (Exception e) {
+            throw new RuntimeException("OCR Request Failed", e);
         }
     }
 
+    // [Restored] Legacy 메서드들
     public String relayRag(FastApiChatRequest request) {
-        try {
-            return client.post().uri(chatPath)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(request)
-                    .retrieve()
-                    .body(String.class);
-        } catch (RestClientResponseException e) {
-            return e.getResponseBodyAsString();
-        }
+        return client.post().uri(chatPath).contentType(MediaType.APPLICATION_JSON).body(request).retrieve().body(String.class);
     }
 
     public String relayNormal(FastApiChatRequest request) {
-        try {
-            return client.post().uri(normalPath)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(request)
-                    .retrieve()
-                    .body(String.class);
-        } catch (RestClientResponseException e) {
-            return e.getResponseBodyAsString();
-        }
-    }
-
-    public String relayChatWithImages(String path, FastApiChatRequest request, List<MultipartFile> files) {
-        try {
-            MultipartBodyBuilder builder = new MultipartBodyBuilder();
-
-            builder.part("user_id", request.userId());
-            builder.part("session_id", request.sessionId());
-            builder.part("query", request.query());
-            builder.part("n_turns", String.valueOf(request.nTurns()));
-
-            // 파일 이름 리스트 전송 로직
-            // FastAPI의 List[str] = Form(...) 은 동일한 키("file_names")로 여러 번 보내면 리스트로 인식함
-            if (request.fileNames() != null && !request.fileNames().isEmpty()) {
-                for (String fileName : request.fileNames()) {
-                    builder.part("file_names", fileName);
-                }
-            }
-
-            if (files != null && !files.isEmpty()) {
-                for (MultipartFile file : files) {
-                    builder.part("files", file.getResource());
-                }
-            }
-
-            return client.post()
-                    .uri(path)
-                    .contentType(MediaType.MULTIPART_FORM_DATA)
-                    .body(builder.build())
-                    .retrieve()
-                    .body(String.class);
-
-        } catch (RestClientResponseException e) {
-            return e.getResponseBodyAsString();
-        }
-    }
-
-    public String getChatPath() {
-        return this.chatPath;
-    }
-
-    public String getNormalPath() {
-        return this.normalPath;
+        return client.post().uri(normalPath).contentType(MediaType.APPLICATION_JSON).body(request).retrieve().body(String.class);
     }
 }

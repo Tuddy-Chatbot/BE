@@ -7,7 +7,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -19,6 +19,7 @@ import io.github.tuddy.dto.ChatProxyResponse;
 import io.github.tuddy.dto.ChatSessionResponse;
 import io.github.tuddy.dto.FastApiChatRequest;
 import io.github.tuddy.dto.FastApiResponse;
+import io.github.tuddy.dto.UploadedFileResponse;
 import io.github.tuddy.entity.chat.ChatMessage;
 import io.github.tuddy.entity.chat.ChatSession;
 import io.github.tuddy.entity.chat.SenderType;
@@ -38,143 +39,111 @@ import lombok.extern.slf4j.Slf4j;
 public class ChatService {
 
     private final RagChatService ragChatService;
+    private final FileService fileService;
     private final UserAccountRepository userAccountRepository;
     private final ChatSessionRepository sessionRepository;
     private final ChatMessageRepository messageRepository;
     private final UploadedFileRepository uploadedFileRepository;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactionTemplate; // 트랜잭션 제어
+
     private static final int N_TURNS = 7;
 
-    @Transactional
     public ChatProxyResponse processChat(Long userId, ChatProxyRequest req, List<MultipartFile> files) {
-        // 1. 세션 찾기 또는 생성 (본인 소유 검증 포함)
-        ChatSession session = findOrCreateSession(userId, req);
 
-        // 2. 신규 파일 처리 : 이번 요청에 명시적으로 연결된 파일이 있다면 확인 및 검증
+        // 1. [트랜잭션] 세션 조회/생성
+        ChatSession session = transactionTemplate.execute(status -> findOrCreateSession(userId, req));
+
         UploadedFile currentFile = null;
-        if (req.fileId() != null && req.fileId() != 0) {
-            currentFile = uploadedFileRepository.findByIdAndUserAccountId(req.fileId(), userId)
-                    .orElseThrow(() -> new AccessDeniedException("File not found or permission denied."));
 
-            // 처리 완료되지 않은 파일은 채팅에 사용할 수 없음
-            if (currentFile.getStatus() != FileStatus.COMPLETED) {
-                 throw new IllegalStateException("File is not ready. Status: " + currentFile.getStatus());
-            }
+        // 2. [파일 업로드] (내부적으로 트랜잭션 처리됨)
+        if (files != null && !files.isEmpty()) {
+            MultipartFile file = files.get(0);
+            // 여기서 S3 업로드 + DB 저장 + AI 인덱싱 요청이 모두 수행됩니다.
+            UploadedFileResponse uploadedDto = fileService.uploadFile(file, userId);
+
+            currentFile = uploadedFileRepository.findById(uploadedDto.id())
+                    .orElseThrow(() -> new IllegalStateException("File saved but not found"));
+
+        } else if (req.fileId() != null && req.fileId() != 0) {
+            currentFile = uploadedFileRepository.findByIdAndUserAccountId(req.fileId(), userId)
+                    .orElseThrow(() -> new AccessDeniedException("File not found"));
         }
 
-        // 3. 사용자 메시지 저장 (현재 파일이 있다면 메시지에 링크 - 히스토리용)
-        saveMessage(session, SenderType.USER, req.query(), currentFile);
+        // 3. [트랜잭션] 사용자 메시지 저장
+        final UploadedFile fileForSave = currentFile;
+        transactionTemplate.executeWithoutResult(status ->
+            saveMessage(session, SenderType.USER, req.query(), fileForSave)
+        );
 
-        // 4. [자동 RAG 컨텍스트 조회] : 이 세션에서 이전에 사용된 적 있는 모든 '완료된' 파일 조회
+        // 4. RAG 컨텍스트 확인 (과거 파일 존재 여부)
         List<UploadedFile> sessionFiles = messageRepository.findFilesBySessionIdAndStatus(
                 session.getId(), FileStatus.COMPLETED);
 
-        // 방금 추가한 파일(currentFile)이 DB 쿼리 시점에 아직 반영되지 않았을 수 있으므로 리스트에 추가
         if (currentFile != null && !sessionFiles.contains(currentFile)) {
             sessionFiles.add(currentFile);
         }
 
-        // 5. FastAPI 요청 객체 생성 : 파일이 하나라도 있으면 파일명 리스트를 전달, 없으면 null
-        List<String> targetFileNames = sessionFiles.isEmpty() ? null :
-            sessionFiles.stream().map(UploadedFile::getOriginalFilename).collect(Collectors.toList());
-
+        // 5. AI 요청 객체 생성
         var fastApiReq = new FastApiChatRequest(
                 String.valueOf(userId),
                 String.valueOf(session.getId()),
                 req.query(),
-                N_TURNS,
-                targetFileNames // 세션 내 모든 파일명 전달 (자동 RAG)
+                N_TURNS
         );
 
-        // 6. API 경로 결정 (파일 히스토리가 존재하면 무조건 RAG)
-        String apiPath = (targetFileNames != null && !targetFileNames.isEmpty())
-                ? ragChatService.getChatPath()
-                : ragChatService.getNormalPath();
-
-        log.info("Session {}: Using {} files for context. Mode: {}",
-                 session.getId(), (targetFileNames != null ? targetFileNames.size() : 0), apiPath);
-
-        // 7. FastAPI 호출 (이미지가 있으면 함께 전송)
+        // 6. [외부 통신] AI 호출 (트랜잭션 없이 실행 -> 안전함)
+        String apiPath = !sessionFiles.isEmpty() ? ragChatService.getChatPath() : ragChatService.getNormalPath();
         String botAnswerJson = ragChatService.relayChatWithImages(apiPath, fastApiReq, files);
 
-        // 8. 응답 저장
         String botAnswerText = parseAnswer(botAnswerJson);
-        saveMessage(session, SenderType.BOT, botAnswerText, null); // 봇은 파일 참조 없음
+
+        // 7. [트랜잭션] 봇 응답 저장
+        transactionTemplate.executeWithoutResult(status ->
+            saveMessage(session, SenderType.BOT, botAnswerText, null)
+        );
 
         return new ChatProxyResponse(session.getId(), botAnswerText);
     }
 
     private ChatSession findOrCreateSession(Long userId, ChatProxyRequest req) {
-        // 1. 기존 세션 조회 요청 시
         if (req.sessionId() != null && req.sessionId() != 0) {
-            ChatSession session = sessionRepository.findById(req.sessionId())
-                    .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-
-            // 요청한 세션이 본인 맞는지 확인 (IDOR 방지)
-            if (!session.getUserAccount().getId().equals(userId)) {
-                throw new AccessDeniedException("You do not have permission to access this chat session.");
-            }
-            return session;
+            return sessionRepository.findById(req.sessionId())
+                    .filter(s -> s.getUserAccount().getId().equals(userId))
+                    .orElseThrow(() -> new AccessDeniedException("Session access denied"));
         }
+        UserAccount user = userAccountRepository.getReferenceById(userId);
+        String title = (req.query() != null && req.query().length() > 20)
+                     ? req.query().substring(0, 20) : (req.query() == null ? "New Chat" : req.query());
 
-        // 2. 새로운 세션 생성 (파일 연결 로직 완전히 제거 - 순수 대화방)
-        UserAccount user = userAccountRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+        return sessionRepository.save(ChatSession.builder().userAccount(user).title(title).build());
+    }
 
-        String title = req.query().length() > 50 ? req.query().substring(0, 50) : req.query();
-
-        ChatSession newSession = ChatSession.builder()
-                .userAccount(user)
-                .title(title)
-                .build();
-        return sessionRepository.save(newSession);
+    private void saveMessage(ChatSession session, SenderType sender, String content, UploadedFile file) {
+        messageRepository.save(ChatMessage.builder()
+                .session(session).senderType(sender).content(content).uploadedFile(file).build());
     }
 
     private String parseAnswer(String jsonResponse) {
         if (jsonResponse == null || jsonResponse.isBlank()) {
-            return "답변을 받지 못했습니다.";
-        }
+			return "답변 없음";
+		}
         try {
-            FastApiResponse response = objectMapper.readValue(jsonResponse, FastApiResponse.class);
-            if (response.response() == null || response.response().isBlank()) {
-                return "답변을 생성하지 못했습니다.";
-            }
-            return response.response();
+            FastApiResponse res = objectMapper.readValue(jsonResponse, FastApiResponse.class);
+            return res.response() != null ? res.response() : "생성 실패";
         } catch (JsonProcessingException e) {
-            log.error("Failed to parse FastAPI response: {}", jsonResponse, e);
-            return "챗봇 응답 처리 중 오류가 발생했습니다.";
+            log.error("JSON Error", e);
+            return "오류 발생";
         }
     }
 
-    // 파일 참조 정보를 포함하는 저장 메서드 (오버로딩)
-    private void saveMessage(ChatSession session, SenderType sender, String content, UploadedFile file) {
-        ChatMessage message = ChatMessage.builder()
-            .session(session)
-            .senderType(sender)
-            .content(content)
-            .uploadedFile(file) // 메시지에 파일 연결
-            .build();
-        messageRepository.save(message);
-    }
-
-    @Transactional(readOnly = true)
+    // 조회 로직 유지
     public List<ChatSessionResponse> getMyChatSessions(Long userId) {
         return sessionRepository.findAllByUserAccountIdOrderByCreatedAtDesc(userId)
-                .stream()
-                .map(ChatSessionResponse::from)
-                .collect(Collectors.toList());
+                .stream().map(ChatSessionResponse::from).collect(Collectors.toList());
     }
 
-    @Transactional(readOnly = true)
     public Slice<ChatMessageResponse> getMessagesBySession(Long userId, Long sessionId, Pageable pageable) {
-        ChatSession session = sessionRepository.findById(sessionId)
-                .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-
-        if (!session.getUserAccount().getId().equals(userId)) {
-            throw new AccessDeniedException("You do not have permission to access this chat session.");
-        }
-
-        // 최신순으로 페이징 조회
         return messageRepository.findAllBySessionIdOrderByCreatedAtDesc(sessionId, pageable)
                 .map(ChatMessageResponse::from);
     }

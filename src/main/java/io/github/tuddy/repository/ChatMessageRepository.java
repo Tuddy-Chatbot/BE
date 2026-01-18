@@ -14,11 +14,8 @@ import io.github.tuddy.entity.file.UploadedFile;
 
 public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> {
 
-    // Pageable을 받아 Slice를 반환
     Slice<ChatMessage> findAllBySessionIdOrderByCreatedAtDesc(Long sessionId, Pageable pageable);
 
-
-    // 특정 세션 내에서 참조된 모든 '처리 완료된' 파일을 중복 없이 조회
     @Query("SELECT DISTINCT m.uploadedFile FROM ChatMessage m " +
            "WHERE m.session.id = :sessionId " +
            "AND m.uploadedFile IS NOT NULL " +

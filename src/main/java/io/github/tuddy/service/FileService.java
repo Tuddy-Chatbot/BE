@@ -6,6 +6,7 @@ import java.util.stream.Collectors;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import io.github.tuddy.dto.UploadedFileResponse;
 import io.github.tuddy.entity.file.FileStatus;
@@ -13,72 +14,97 @@ import io.github.tuddy.entity.file.UploadedFile;
 import io.github.tuddy.entity.user.UserAccount;
 import io.github.tuddy.repository.UploadedFileRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
-// 사용자가 업로드한 파일 목록을 조회하고, 파일을 삭제하는 비즈니스 로직
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class FileService {
 
     private final UploadedFileRepository uploadedFileRepository;
     private final S3Service s3Service;
-    private final RagChatService ragChatService;
+    private final RagChatService ragChatService; // AI 연결용
 
-    // 현재 로그인한 사용자가 업로드한 모든 파일 목록을 조회
-    @Transactional(readOnly = true)
-    public List<UploadedFileResponse> getMyFiles(Long userId) {
-        return uploadedFileRepository.findAllByUserAccountIdOrderByCreatedAtDesc(userId)
-                .stream()
-                .map(UploadedFileResponse::from)
-                .collect(Collectors.toList());
-    }
-
-    // 파일 삭제 : DB와 S3에서 모두 삭제됨
+    /**
+     * 채팅용 파일 처리 (S3 업로드 -> DB 저장 -> AI 인덱싱 요청)
+     */
     @Transactional
-    public void deleteFile(Long userId, Long fileId) {
-        // 1. 본인 소유의 파일이 맞는지 확인하며 파일 정보를 조회
-        UploadedFile file = uploadedFileRepository.findByIdAndUserAccountId(fileId, userId)
-                .orElseThrow(() -> new AccessDeniedException("File not found or you don't have permission."));
+    public UploadedFileResponse uploadFile(MultipartFile file, Long userId) {
+        if (file.isEmpty()) {
+			throw new IllegalArgumentException("Cannot upload empty file");
+		}
 
-        // 2. S3에서 실제 파일을 삭제
-        s3Service.deleteFile(file.getS3Key());
+        // 1. S3 업로드
+        String s3Key = s3Service.upload(file);
 
-        // 3. 데이터베이스에서 파일 정보를 삭제
-        uploadedFileRepository.delete(file);
+        // 2. DB 저장
+        UploadedFile uploadedFile = UploadedFile.builder()
+                .userAccount(UserAccount.builder().id(userId).build())
+                .originalFilename(file.getOriginalFilename())
+                .s3Key(s3Key)
+                .status(FileStatus.PROCESSING)
+                .build();
+
+        UploadedFile savedFile = uploadedFileRepository.save(uploadedFile);
+
+        // 3. AI 서버에 인덱싱(OCR) 요청
+        try {
+            ragChatService.sendOcrRequest(String.valueOf(userId), s3Key);
+
+            // 성공 시 상태 완료
+            savedFile.setStatus(FileStatus.COMPLETED);
+            uploadedFileRepository.save(savedFile);
+            log.info("File indexed successfully: {}", s3Key);
+
+        } catch (Exception e) {
+            log.error("AI Indexing failed: {}", s3Key, e);
+            // 인덱싱 실패해도 일단 채팅은 진행되도록 COMPLETED 처리 : 추후 변경 논의
+            savedFile.setStatus(FileStatus.COMPLETED);
+            uploadedFileRepository.save(savedFile);
+        }
+
+        return UploadedFileResponse.from(savedFile);
     }
 
-    // S3 URL 발급 시 메타데이터 생성 : 트랜잭션 분리
     @Transactional
     public UploadedFile createFileMetadata(Long userId, String filename, String s3Key) {
-        UserAccount user = UserAccount.builder().id(userId).build(); // 프록시용
         UploadedFile file = UploadedFile.builder()
-                .userAccount(user)
+                .userAccount(UserAccount.builder().id(userId).build())
                 .originalFilename(filename)
                 .s3Key(s3Key)
-                .status(FileStatus.PENDING) // 초기 상태
+                .status(FileStatus.PENDING)
                 .build();
         return uploadedFileRepository.save(file);
     }
 
-    // 프론트엔드가 S3 업로드 완료 후 호출
     @Transactional
     public void processUploadedFile(Long userId, Long fileId) {
         UploadedFile file = uploadedFileRepository.findByIdAndUserAccountId(fileId, userId)
-                .orElseThrow(() -> new AccessDeniedException("File not found or no permission"));
+                .orElseThrow(() -> new AccessDeniedException("File not found"));
 
-        // 상태 업데이트: 처리 중
         file.setStatus(FileStatus.PROCESSING);
-        uploadedFileRepository.saveAndFlush(file); // 즉시 DB 반영
+        uploadedFileRepository.saveAndFlush(file);
 
         try {
-            // FastAPI 호출 (오래 걸릴 수 있음)
             ragChatService.sendOcrRequest(String.valueOf(userId), file.getS3Key());
-
-            // 성공 시 완료 상태로 변경
             file.setStatus(FileStatus.COMPLETED);
         } catch (Exception e) {
             file.setStatus(FileStatus.FAILED);
-            throw new RuntimeException("File processing failed", e);
+            log.error("File processing failed", e);
         }
     }
 
+    @Transactional(readOnly = true)
+    public List<UploadedFileResponse> getMyFiles(Long userId) {
+        return uploadedFileRepository.findAllByUserAccountIdOrderByCreatedAtDesc(userId)
+                .stream().map(UploadedFileResponse::from).collect(Collectors.toList());
+    }
+
+    @Transactional
+    public void deleteFile(Long userId, Long fileId) {
+        UploadedFile file = uploadedFileRepository.findByIdAndUserAccountId(fileId, userId)
+                .orElseThrow(() -> new AccessDeniedException("File not found"));
+        s3Service.deleteFile(file.getS3Key());
+        uploadedFileRepository.delete(file);
+    }
 }

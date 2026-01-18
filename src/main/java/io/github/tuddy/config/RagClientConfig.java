@@ -24,10 +24,11 @@ public class RagClientConfig {
                 .build();
     }
 
+    // fastapi 서버 타임아웃 관리
     @Bean(name = "ragClientFactory")
     ClientHttpRequestFactory ragClientFactory(
-            @Value("${rag.api.connect-timeout:PT5S}") Duration connect,
-            @Value("${rag.api.read-timeout:PT30S}") Duration read) {
+            @Value("${rag.api.connect-timeout:PT60S}") Duration connect,
+            @Value("${rag.api.read-timeout:PT600S}") Duration read) {
         var f = new SimpleClientHttpRequestFactory();
         f.setConnectTimeout((int) connect.toMillis());
         f.setReadTimeout((int) read.toMillis());
