@@ -70,7 +70,7 @@ public class SecurityConfig {
 
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.GET, "/", "/actuator/**", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
-                .requestMatchers("/auth/login", "/auth/register", "/auth/refresh").permitAll()
+                .requestMatchers("/auth/login/**", "/auth/register/**", "/auth/refresh/**").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider), UsernamePasswordAuthenticationFilter.class)
