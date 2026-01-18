@@ -27,19 +27,23 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
 public class S3Service {
 
     private final S3Client s3Client;       // 직접 업로드용
-    private final S3Presigner s3Presigner; // URL 생성용
+    private final S3Presigner s3Presigner; // URL 발급용
 
     @Value("${app.aws.s3.bucket}")
     private String bucket;
 
-    // 서버 직접 업로드 (ChatService용)
+    /**
+     * 서버 직접 업로드 (ChatService 흐름용)
+     * 파일을 S3 'chat-files/' 경로에 저장하고 Key를 반환
+     */
     public String upload(MultipartFile file) {
         String originalFilename = file.getOriginalFilename();
-        String extension = "";
-        if (originalFilename != null && originalFilename.contains(".")) {
-            extension = originalFilename.substring(originalFilename.lastIndexOf("."));
-        }
-        String s3Key = UUID.randomUUID().toString() + extension;
+        if (originalFilename == null) {
+			originalFilename = "unknown";
+		}
+
+        // 경로 관리: chat-files/UUID_파일명
+        String s3Key = "chat-files/" + UUID.randomUUID() + "_" + originalFilename;
 
         try {
             PutObjectRequest putOb = PutObjectRequest.builder()
@@ -49,7 +53,7 @@ public class S3Service {
                     .build();
 
             s3Client.putObject(putOb, RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
-            log.info("Direct upload success: {}", s3Key);
+            log.info("S3 Direct Upload Success: {}", s3Key);
             return s3Key;
 
         } catch (IOException e) {
@@ -57,14 +61,21 @@ public class S3Service {
         }
     }
 
+    /**
+     * Presigned URL Key 생성 (UploadController용)
+     * 기존 로직 유지: raw/{userId}/{uuid}_{filename}
+     */
     public String buildKey(Long userId, String filename) {
         return "raw/" + userId + "/" + UUID.randomUUID() + "_" + filename;
     }
 
+    /**
+     * 업로드용 URL 발급 (UploadController용)
+     */
     public Map<String, Object> presignPut(Long userId, String filename, String contentType, long contentLength, String key) {
-        long limit = 100 * 1024 * 1024; // 100MB
+        long limit = 100 * 1024 * 1024; // 100MB 제한
         if (contentLength > limit) {
-             throw new IllegalArgumentException("SIZE_LIMIT_EXCEEDED: Max 100MB");
+             throw new IllegalArgumentException("SIZE_LIMIT_EXCEEDED");
         }
 
         PutObjectRequest objectRequest = PutObjectRequest.builder()
@@ -75,7 +86,7 @@ public class S3Service {
                 .build();
 
         PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
-                .signatureDuration(Duration.ofMinutes(10))
+                .signatureDuration(Duration.ofMinutes(15)) // app.s3.presign.ttl=PT15M 반영
                 .putObjectRequest(objectRequest)
                 .build();
 
@@ -87,6 +98,9 @@ public class S3Service {
         return res;
     }
 
+    /**
+     * 다운로드용 URL 발급 (UploadController용)
+     */
     public String presignGet(String key) {
         GetObjectRequest objectRequest = GetObjectRequest.builder()
                 .bucket(bucket)
@@ -94,7 +108,7 @@ public class S3Service {
                 .build();
 
         GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
-                .signatureDuration(Duration.ofMinutes(10))
+                .signatureDuration(Duration.ofMinutes(15))
                 .getObjectRequest(objectRequest)
                 .build();
 
@@ -109,7 +123,7 @@ public class S3Service {
         try {
             s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(s3Key).build());
         } catch (Exception e) {
-            log.error("Failed to delete file: {}", s3Key, e);
+            log.error("Failed to delete file from S3: {}", s3Key, e);
         }
     }
 }
