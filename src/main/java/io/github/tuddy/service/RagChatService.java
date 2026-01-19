@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.multipart.MultipartFile;
 
 import io.github.tuddy.dto.FastApiChatRequest;
@@ -37,12 +38,23 @@ public class RagChatService {
     public String getChatPath() { return this.chatPath; }
     public String getNormalPath() { return this.normalPath; }
 
-    // Multipart 채팅 요청 (ChatService 사용)
+    // [RAG Chat] 파일이 있을 때 (Multipart + File)
     public String relayChatWithImages(String path, FastApiChatRequest req, List<MultipartFile> files) {
+        return sendMultipartRequest(path, req, files);
+    }
+
+    // [Normal Chat] 파일이 없을 때 (Multipart Only - No File)
+    // 수정: FastAPI가 Form 데이터를 요구하므로 JSON 대신 Multipart로 전송
+    public String relayNormal(FastApiChatRequest req) {
+        return sendMultipartRequest(normalPath, req, null);
+    }
+
+    // 공통 요청 메서드 (중복 제거)
+    private String sendMultipartRequest(String path, FastApiChatRequest req, List<MultipartFile> files) {
         try {
             MultipartBodyBuilder builder = new MultipartBodyBuilder();
 
-            // Python 규격(snake_case)에 맞춰 파라미터 전송
+            // FastAPI Form(...) 필드 매핑
             builder.part("user_id", req.userId());
             builder.part("query", req.query());
             builder.part("n_turns", String.valueOf(req.nTurns()));
@@ -51,6 +63,7 @@ public class RagChatService {
                 builder.part("session_id", req.sessionId());
             }
 
+            // 파일이 있는 경우에만 추가
             if (files != null && !files.isEmpty()) {
                 for (MultipartFile file : files) {
                     builder.part("files", file.getResource());
@@ -63,13 +76,16 @@ public class RagChatService {
                     .retrieve()
                     .body(String.class);
 
+        } catch (RestClientResponseException e) {
+            log.error("AI Server Error [{}]: {}", e.getStatusCode(), e.getResponseBodyAsString());
+            return makeErrorJson(e.getResponseBodyAsString());
         } catch (Exception e) {
-            log.error("AI Chat Error", e);
-            return "{\"response\": \"AI 서버 오류: " + e.getMessage() + "\"}";
+            log.error("AI Connection Error", e);
+            return makeErrorJson(e.getMessage());
         }
     }
 
-    // OCR 요청 (FileService 사용)
+    // [OCR] 파일 업로드 시 인덱싱 요청
     public void sendOcrRequest(String userId, String fileKey) {
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("user_id", userId);
@@ -81,17 +97,19 @@ public class RagChatService {
                     .body(body)
                     .retrieve()
                     .toBodilessEntity();
+            log.info("OCR Request Sent: {}", fileKey);
         } catch (Exception e) {
-            throw new RuntimeException("OCR Request Failed", e);
+            log.error("OCR Request Failed", e);
         }
     }
 
-    // [Restored] Legacy 메서드들
-    public String relayRag(FastApiChatRequest request) {
-        return client.post().uri(chatPath).contentType(MediaType.APPLICATION_JSON).body(request).retrieve().body(String.class);
+    private String makeErrorJson(String msg) {
+        String safeMsg = (msg == null) ? "Unknown Error" : msg.replace("\"", "'").replace("\n", " ");
+        return "{\"response\": \"AI 서버 오류: " + safeMsg + "\"}";
     }
 
-    public String relayNormal(FastApiChatRequest request) {
-        return client.post().uri(normalPath).contentType(MediaType.APPLICATION_JSON).body(request).retrieve().body(String.class);
+    // Legacy
+    public String relayRag(FastApiChatRequest request) {
+        return relayNormal(request);
     }
 }
