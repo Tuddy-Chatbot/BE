@@ -23,21 +23,17 @@ public class FileService {
 
     private final UploadedFileRepository uploadedFileRepository;
     private final S3Service s3Service;
-    private final RagChatService ragChatService; // AI 연결용
+    private final RagChatService ragChatService;
 
-    /**
-     * 채팅용 파일 처리 (S3 업로드 -> DB 저장 -> AI 인덱싱 요청)
-     */
     @Transactional
     public UploadedFileResponse uploadFile(MultipartFile file, Long userId) {
         if (file.isEmpty()) {
 			throw new IllegalArgumentException("Cannot upload empty file");
 		}
 
-        // 1. S3 업로드
-        String s3Key = s3Service.upload(file);
+        // userId를 넘겨주어 'raw/{userId}/' 경로에 저장되도록 함
+        String s3Key = s3Service.upload(file, userId);
 
-        // 2. DB 저장
         UploadedFile uploadedFile = UploadedFile.builder()
                 .userAccount(UserAccount.builder().id(userId).build())
                 .originalFilename(file.getOriginalFilename())
@@ -47,18 +43,13 @@ public class FileService {
 
         UploadedFile savedFile = uploadedFileRepository.save(uploadedFile);
 
-        // 3. AI 서버에 인덱싱(OCR) 요청
         try {
             ragChatService.sendOcrRequest(String.valueOf(userId), s3Key);
-
-            // 성공 시 상태 완료
             savedFile.setStatus(FileStatus.COMPLETED);
             uploadedFileRepository.save(savedFile);
             log.info("File indexed successfully: {}", s3Key);
-
         } catch (Exception e) {
             log.error("AI Indexing failed: {}", s3Key, e);
-            // 인덱싱 실패해도 일단 채팅은 진행되도록 COMPLETED 처리 : 추후 변경 논의
             savedFile.setStatus(FileStatus.COMPLETED);
             uploadedFileRepository.save(savedFile);
         }

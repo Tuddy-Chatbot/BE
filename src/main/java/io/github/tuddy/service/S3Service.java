@@ -33,17 +33,16 @@ public class S3Service {
     private String bucket;
 
     /**
-     * 서버 직접 업로드 (ChatService용)
-     * 파일을 'chat-files/' 경로에 저장
+     * 서버 직접 업로드 : 기존 규칙 준수 raw/{userId}/{uuid}_{filename}
      */
-    public String upload(MultipartFile file) {
+    public String upload(MultipartFile file, Long userId) {
         String originalFilename = file.getOriginalFilename();
         if (originalFilename == null) {
 			originalFilename = "unknown";
 		}
 
-        // 경로 구분 및 충돌 방지
-        String s3Key = "chat-files/" + UUID.randomUUID() + "_" + originalFilename;
+        // 기존 구조와 동일하게 'raw/{userId}/' 경로 사용
+        String s3Key = "raw/" + userId + "/" + UUID.randomUUID() + "_" + originalFilename;
 
         try {
             PutObjectRequest putOb = PutObjectRequest.builder()
@@ -62,17 +61,14 @@ public class S3Service {
     }
 
     /**
-     * Presigned URL Key 생성 (UploadController용)
+     * Presigned URL Key 생성
      */
     public String buildKey(Long userId, String filename) {
         return "raw/" + userId + "/" + UUID.randomUUID() + "_" + filename;
     }
 
-    /**
-     * 업로드용 URL 발급
-     */
     public Map<String, Object> presignPut(Long userId, String filename, String contentType, long contentLength, String key) {
-        long limit = 100 * 1024 * 1024; // 100MB
+        long limit = 100 * 1024 * 1024;
         if (contentLength > limit) {
 			throw new IllegalArgumentException("SIZE_LIMIT_EXCEEDED");
 		}
@@ -97,9 +93,6 @@ public class S3Service {
         return res;
     }
 
-    /**
-     * 다운로드용 URL 발급
-     */
     public String presignGet(String key) {
         GetObjectRequest objectRequest = GetObjectRequest.builder()
                 .bucket(bucket)
