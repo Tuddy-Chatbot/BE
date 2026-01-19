@@ -55,18 +55,21 @@ public class ChatService {
 
         UploadedFile currentFile = null;
 
-        // 2. 파일이 있다면 업로드 처리 (S3 + DB + OCR 요청)
-        // fileService.uploadFile 내부에서 OCR 요청까지 수행함
+        // 2. [수정] 파일 처리 로직 개선
+        // Case A: 새로 업로드된 파일이 있는 경우
         if (files != null && !files.isEmpty()) {
             MultipartFile file = files.get(0);
             UploadedFileResponse uploadedDto = fileService.uploadFile(file, userId);
-
-            // 저장된 파일 엔티티 조회
             currentFile = uploadedFileRepository.findById(uploadedDto.id())
                     .orElseThrow(() -> new IllegalStateException("File saved but not found"));
         }
+        // Case B: 기존 파일을 선택해서 보낸 경우 (fileId가 있는 경우)
+        else if (req.fileId() != null && req.fileId() != 0) {
+            currentFile = uploadedFileRepository.findByIdAndUserAccountId(req.fileId(), userId)
+                    .orElseThrow(() -> new AccessDeniedException("File not found or access denied"));
+        }
 
-        // 3. [트랜잭션] 사용자 메시지 DB 저장 (AI 요청 전에 저장하여 데이터 보존)
+        // 3. [트랜잭션] 사용자 메시지 저장 (파일 정보가 있으면 같이 저장됨)
         final UploadedFile fileForSave = currentFile;
         transactionTemplate.executeWithoutResult(status ->
             saveMessage(session, SenderType.USER, req.query(), fileForSave)
@@ -82,25 +85,37 @@ public class ChatService {
 
         String botAnswerJson;
 
-        // 5. [핵심 로직] 파일 유무에 따른 명확한 라우팅 분기
-        if (files != null && !files.isEmpty()) {
-            // Case A: 파일이 포함된 요청 -> /rag/chat (Multipart 전송)
-            log.info("Routing to RAG Chat (Multipart) - File attached. Session: {}", session.getId());
+        // 5. [핵심 수정] RAG 모드 라우팅 조건 변경
+        // 새 파일이 있거나(files) OR 기존 파일을 선택했거나(currentFile) -> RAG
+        if ((files != null && !files.isEmpty()) || currentFile != null) {
+            log.info("Routing to RAG Chat (Multipart). Session: {}, FileId: {}", session.getId(),
+                     (currentFile != null ? currentFile.getId() : "New File"));
+
+            // 파일이 없어도(null) currentFile이 있으면 RAG 경로로 보냄 (FastAPI가 세션/벡터DB 참조)
             botAnswerJson = ragChatService.relayChatWithImages(
                     ragChatService.getChatPath(),
                     fastApiReq,
                     files
             );
         } else {
-            // Case B: 파일이 없는 요청 -> /normal/chat (JSON 전송)
-            log.info("Routing to Normal Chat (JSON) - No file. Session: {}", session.getId());
-            botAnswerJson = ragChatService.relayNormal(fastApiReq);
+            // 파일 관련 내용이 전혀 없으면 일반 대화
+            // (단, 이 세션의 과거 기록에 파일이 있었다면 RAG로 보내는 게 좋을 수 있음.
+            //  필요 시 existsBySessionIdAndUploadedFileIsNotNull 체크 추가 가능)
+            boolean hasHistory = messageRepository.existsBySessionIdAndUploadedFileIsNotNull(session.getId());
+
+            if (hasHistory) {
+                log.info("Routing to RAG Chat (History based). Session: {}", session.getId());
+                botAnswerJson = ragChatService.relayChatWithImages(ragChatService.getChatPath(), fastApiReq, null);
+            } else {
+                log.info("Routing to Normal Chat (JSON). Session: {}", session.getId());
+                botAnswerJson = ragChatService.relayNormal(fastApiReq);
+            }
         }
 
-        // 6. AI 응답 파싱 (JSON -> String)
+        // 6. AI 응답 파싱
         String botAnswerText = parseAnswer(botAnswerJson);
 
-        // 7. [트랜잭션] 봇 응답 DB 저장
+        // 7. [트랜잭션] 봇 응답 저장
         transactionTemplate.executeWithoutResult(status ->
             saveMessage(session, SenderType.BOT, botAnswerText, null)
         );
@@ -108,7 +123,6 @@ public class ChatService {
         return new ChatProxyResponse(session.getId(), botAnswerText);
     }
 
-    // 세션 찾기 또는 생성
     private ChatSession findOrCreateSession(Long userId, ChatProxyRequest req) {
         if (req.sessionId() != null && req.sessionId() != 0) {
             return sessionRepository.findById(req.sessionId())
@@ -116,49 +130,37 @@ public class ChatService {
                     .orElseThrow(() -> new AccessDeniedException("Session access denied"));
         }
         UserAccount user = userAccountRepository.getReferenceById(userId);
-        // 첫 메시지로 방 제목 생성 (최대 20자)
         String title = (req.query() != null && req.query().length() > 20)
                      ? req.query().substring(0, 20) : (req.query() == null ? "New Chat" : req.query());
-
         return sessionRepository.save(ChatSession.builder().userAccount(user).title(title).build());
     }
 
-    // 메시지 저장
     private void saveMessage(ChatSession session, SenderType sender, String content, UploadedFile file) {
         messageRepository.save(ChatMessage.builder()
-                .session(session)
-                .senderType(sender)
-                .content(content)
-                .uploadedFile(file)
-                .build());
+                .session(session).senderType(sender).content(content).uploadedFile(file).build());
     }
 
-    // AI 응답 JSON 파싱
     private String parseAnswer(String jsonResponse) {
         if (jsonResponse == null || jsonResponse.isBlank()) {
 			return "응답 없음";
 		}
         try {
-            // 정상적인 JSON 응답인지 확인
             if (jsonResponse.trim().startsWith("{")) {
                 FastApiResponse res = objectMapper.readValue(jsonResponse, FastApiResponse.class);
                 return res.response() != null ? res.response() : "AI 응답 내용 없음";
             }
-            // JSON이 아니면 에러 메시지일 가능성이 높음
             return jsonResponse;
         } catch (JsonProcessingException e) {
-            log.error("JSON Parse Error: {}", jsonResponse, e);
-            return "응답 처리 오류";
+            log.error("JSON Error", e);
+            return jsonResponse;
         }
     }
 
-    // 세션 목록 조회
     public List<ChatSessionResponse> getMyChatSessions(Long userId) {
         return sessionRepository.findAllByUserAccountIdOrderByCreatedAtDesc(userId)
                 .stream().map(ChatSessionResponse::from).collect(Collectors.toList());
     }
 
-    // 메시지 목록 조회
     public Slice<ChatMessageResponse> getMessagesBySession(Long userId, Long sessionId, Pageable pageable) {
         return messageRepository.findAllBySessionIdOrderByCreatedAtDesc(sessionId, pageable)
                 .map(ChatMessageResponse::from);
