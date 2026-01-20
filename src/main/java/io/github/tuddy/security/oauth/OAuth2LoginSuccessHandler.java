@@ -68,7 +68,7 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
         // 5. Refresh Token을 HttpOnly 쿠키에 저장
         Cookie refreshCookie = new Cookie("refresh_token", refreshToken);
         refreshCookie.setHttpOnly(true); // 자바스크립트 접근 불가 (XSS 방지)
-        refreshCookie.setSecure(false);  // 로컬(http)은 false, 배포(https)는 true로 변경 필요
+        refreshCookie.setSecure(true);  // 로컬(http)은 false, 배포(https)는 true로 변경 필요
         refreshCookie.setPath("/");      // 모든 경로에서 쿠키 전송
         refreshCookie.setMaxAge(7 * 24 * 60 * 60); // 7일
 
