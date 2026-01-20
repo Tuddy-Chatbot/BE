@@ -65,6 +65,8 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 
+            .logout(AbstractHttpConfigurer::disable)
+
             // 인증 실패 시 로그인 페이지 리다이렉트 대신 401 에러 반환 : 추후 논의
             .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
 
