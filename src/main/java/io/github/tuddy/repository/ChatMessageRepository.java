@@ -22,4 +22,7 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> 
            "AND m.uploadedFile.status = :status")
     List<UploadedFile> findFilesBySessionIdAndStatus(@Param("sessionId") Long sessionId,
                                                      @Param("status") FileStatus status);
+
+    // 해당 세션에 파일 첨부 메세지 있나 확인
+    boolean existsBySessionIdAndUploadedFileIsNotNull(Long sessionId);
 }
